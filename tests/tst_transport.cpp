@@ -117,6 +117,27 @@ oic::net::Resolver loopbackFor(QStringList *seen)
     };
 }
 
+// Answers by hanging up. Deliberately not a refused port: Winsock retries a
+// refused loopback connect for ~4 s, which sits one rounding error away from the
+// 5 s minimum request timeout and would make the case flake in CI.
+class SilentServer : public QObject {
+public:
+    bool listen() { return server_.listen(QHostAddress::LocalHost, 0); }
+    quint16 port() const { return server_.serverPort(); }
+
+    void start()
+    {
+        QObject::connect(&server_, &QTcpServer::newConnection, this, [this] {
+            QTcpSocket *sock = server_.nextPendingConnection();
+            sock->abort();
+            sock->deleteLater();
+        });
+    }
+
+private:
+    QTcpServer server_;
+};
+
 }  // namespace
 
 class TstTransport : public QObject
@@ -125,6 +146,7 @@ class TstTransport : public QObject
 
 private:
     FakeUpstream upstream_;
+    SilentServer silent_;
 
     oic::net::Transport makeTransport(const QStringList &trustedHosts, QStringList *lookups = nullptr) const
     {
@@ -146,6 +168,8 @@ private slots:
     {
         QVERIFY(upstream_.listen());
         upstream_.start();
+        QVERIFY(silent_.listen());
+        silent_.start();
     }
 
     // The three-part pinning shape from §8.3: an IP-literal URL makes QNAM send
@@ -309,11 +333,12 @@ private slots:
         QVERIFY2(!client.retryable, "a 4xx refusal must not re-POST a 30 MB body");
     }
 
-    void refusedConnectionIsReportedAndRetryable()
+    void connectionClosedWithoutAnswerIsReportedAndRetryable()
     {
-        // Nothing listens on this port: the dial fails before any HTTP happens.
+        // The peer accepts and hangs up before sending a byte: no HTTP happened,
+        // so the next candidate endpoint is worth a try.
         oic::net::Request request;
-        request.url = QUrl(QStringLiteral("http://pin.example.test:1/"));
+        request.url = QUrl(QStringLiteral("http://pin.example.test:%1/").arg(silent_.port()));
         const oic::net::Reply reply = makeTransport({ "pin.example.test" }).send(request);
         QCOMPARE(reply.status, 0);
         QVERIFY2(reply.error.contains(QString::fromUtf8("无法连接")), qPrintable(reply.error));
