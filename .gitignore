@@ -3,3 +3,6 @@ build/
 *.user
 .cache/
 compile_commands.json
+
+# 天枢运行时状态（知识库 / meridian db / artifacts）—— 本地生成，不入库
+.rivet/
