@@ -17,3 +17,15 @@ oic_add_test(tst_urlpolicy tst_urlpolicy.cpp)
 oic_add_test(tst_decode tst_decode.cpp)
 oic_add_test(tst_retrypolicy tst_retrypolicy.cpp)
 oic_add_test(tst_transport tst_transport.cpp)
+
+# Only the image probe test needs QtGui: it cross-checks the header parser
+# against Qt's own decoder. The library itself stays Gui-free.
+oic_add_test(tst_imageprobe tst_imageprobe.cpp)
+target_link_libraries(tst_imageprobe PRIVATE Qt6::Gui)
+
+oic_add_test(tst_store tst_store.cpp)
+
+# Talks to the real Windows Credential Manager, so it is Windows-only.
+if(WIN32)
+    oic_add_test(tst_credentials tst_credentials.cpp)
+endif()
