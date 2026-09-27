@@ -5,11 +5,13 @@ qt_add_library(oic-core STATIC
     oic/core/urlpolicy.h
     oic/core/decode.h
     oic/core/retrypolicy.h
+    oic/net/transport.h
     models.cpp
     endpoints.cpp
     urlpolicy.cpp
     decode.cpp
     retrypolicy.cpp
+    net/transport.cpp
 )
 
 target_include_directories(oic-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

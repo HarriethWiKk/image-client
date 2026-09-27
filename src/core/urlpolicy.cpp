@@ -162,13 +162,19 @@ QList<QHostAddress> orderForPinning(const QList<QHostAddress> &resolved)
     return ordered;
 }
 
-QString authorityOf(const QString &hostname, quint16 port, bool https)
+QString hostHeaderOf(const QString &hostname, quint16 port, bool https)
 {
+    const QString host = normalizeHostname(hostname);
     const quint16 defaultPort = https ? 443 : 80;
-    const QString scheme = https ? QLatin1String("https") : QLatin1String("http");
-    if (port == defaultPort)
-        return QStringLiteral("%1://%2").arg(scheme, normalizeHostname(hostname));
-    return QStringLiteral("%1://%2:%3").arg(scheme, normalizeHostname(hostname)).arg(port);
+    if (port == defaultPort || port == 0)
+        return host;
+    return QStringLiteral("%1:%2").arg(host).arg(port);
+}
+
+QString originOf(const QString &hostname, quint16 port, bool https)
+{
+    return QStringLiteral("%1://%2").arg(https ? QLatin1String("https") : QLatin1String("http"),
+                                         hostHeaderOf(hostname, port, https));
 }
 
 bool retainsCredentialsAcrossRedirect(const QString &fromAuthority, const QString &toAuthority)

@@ -48,6 +48,11 @@ QList<QHostAddress> orderForPinning(const QList<QHostAddress> &resolved);
 // a 302 to an unrelated host must not receive our API key.
 bool retainsCredentialsAcrossRedirect(const QString &fromAuthority, const QString &toAuthority);
 
-QString authorityOf(const QString &hostname, quint16 port, bool https);
+// "host[:port]" with the scheme's default port omitted. This is the value a
+// Host header must carry, and the key authority comparisons are made on.
+QString hostHeaderOf(const QString &hostname, quint16 port, bool https);
+
+// Same origin as a URL prefix ("https://host"), for messages and logs.
+QString originOf(const QString &hostname, quint16 port, bool https);
 
 }  // namespace oic::core

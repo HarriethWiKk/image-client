@@ -358,8 +358,14 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 - 地址排序：IPv4 优先，再按压缩字符串序 —— 保证行为确定。
 - **DNS 重绑定防护**：解析一次并固定，实际连接使用该 IP，同时保持 TLS SNI 与证书主机名校验不变（旧 `PinnedDNSHTTPAdapter`）。旧文档记为"TOCTOU 已修复"，新实现必须等价，不得退化为"校验后再解析一次"。
 - 重定向：手动跟随，≤3 跳，**每一跳重新执行上述全部校验**；跨源的跳转为 `GET` 且**不回传 Authorization**；若需回传凭据（如中转视频，已随范围移除）必须显式授权。
-- **Qt 侧实现方式（2026-09-27 实测接口，勿再凭印象）**：`QAbstractSocket::setPeerAddress` 在 6.8.3 中是 **protected**（`qabstractsocket.h` 的 `protected:` 段自 200 行起，该函数在 211 行），应用代码取不到；`QNetworkRequest` 也没有对等的地址接口。公开可用的钩子是 **`QNetworkRequest::setPeerVerifyName()`**（`qnetworkrequest.h` 约 167 行），它使证书按原始主机名校验而与实连地址无关。因此落地形态是「把 URL 主机段写成已固定的 IP 字面量 + `setPeerVerifyName(原主机名)`」。
-  `[待实测]` 该形态下 `Host:` 头是否仍是原始主机名 —— QNAM 默认按 URL 生成，会退化成 IP，而虚拟主机与 CDN 靠 Host 路由。必须用本地监听端点跑一次确认，必要时显式 `setRawHeader("Host", …)` 并验证不被覆盖。
+- **Qt 侧落地形态（2026-09-27 实测，Qt 6.8.3 + Schannel + MSVC 14.51；每个用例连跑 10 次结果一致）**：`QAbstractSocket::setPeerAddress` 在 6.8.3 是 **protected**（`qabstractsocket.h:211`），应用代码取不到；`QNetworkRequest` 也没有对等的地址接口。可用的组合是**「URL 主机段写成已固定的 IP 字面量 + `QNetworkRequest::setPeerVerifyName(原主机名)` + 显式 `setRawHeader("Host", 原 authority)`」**，三件套缺一不可：
+  - `setPeerVerifyName` 决定**证书主机名校验目标**：给一个不匹配的名字 → `The host name did not match any of the valid hosts for this certificate`；完全不设 → 退回按 IP 字面量比对，同样拒绝。校验没有被跳过，也没有静默降级。
+  - `setPeerVerifyName` 同时决定 **SNI**：IP 字面量 URL + `peerVerifyName=pin.example.test` → ClientHello 内 `server_name=pin.example.test`。**不显式设它 SNI 就整个消失**（Qt 按 URL 主机生成，而 RFC 6066 禁止 IP 字面量作 server_name）—— 忘了设不只是主机名校验变弱，还会让 CDN／虚拟主机选不到站点。这条是抓 ClientHello 字节确认的，不是读文档得来的。
+  - `Host:` 头默认按 URL 生成，即退化成 `127.0.0.1:port`，**必须显式设置**；显式值原样到端（非默认端口也保留），不被 QNAM 覆盖，也不会出现两个 `Host`。线上头名是小写 `host:`，HTTP/1.1 头名大小写不敏感，不用处理。
+  - `QSslConfiguration::setCaCertificates()` 在 Schannel 后端**确实生效**：同一张自签证书，自定义 CA 列表 → 200；换成系统 297 个根 → `The certificate is self-signed, and untrusted`。§6.3 的"信任本地网关"配置项因此可做，不必写系统证书存储。
+  - 强制 TLS 1.2 与强制 TLS 1.3 两条路径都通过，无协议相关差异。
+  - **写测试时的坑**：上游 socket 在 `connected` 之前 `write()` 的字节会被丢掉。最初观察到的"偶发 12 秒挂起"就是它造成的，与 Qt 无关；假端点必须把字节缓存到 `connected` 之后再写。
+- QNAM 默认发送 `accept-encoding: gzip, deflate` 并**自动解压**：§7.4 的上限必须按实际读到的（解压后）字节累计，`Content-Length` 是压缩前长度，只能当快速拒绝的参考，不能当唯一依据。
 - **IPv4 判定不能只靠 `QHostAddress::isGlobal()`**：实测它把 **172.16/12 与 100.64/10 视为 global**（组播 `224/4` 也不在其 IPv4 判定内）。`urlpolicy.cpp` 因此自带保留段表；IPv6 侧仍依赖 Qt 谓词加 ULA，文档段与 Teredo 未枚举 —— 这是已知缺口而非取舍。
 - 所有上游响应体经 §7.4 有界读取。
 
@@ -428,9 +434,18 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 `.github/workflows/ci.yml` 的 "Package and measure bundle" 步骤用同一组 windeployqt 参数在 CI 上重算这两个数，写进 job summary，并在超过 **60 MB** 时让作业失败。所以上面三项裁剪落地时，这里应当观察到下降而不是上升；若观察到上升，说明部署目录混进了多余东西（最常见的来源是 debug 版 DLL 或 qmltooling）。
 
-### 11.2 双二进制的体积红利（实测确认）
+### 11.2 双二进制的体积红利（实测确认，2026-09-27 复测）
 
-扫导入表：`image-client-mcp.exe` **只引用 `Qt6Core.dll`**，GUI 版引用 Core/Gui/Qml/QuickControls2（Quick 经 QML 插件运行时加载）。即 §2.1 的拆分让 MCP 服务端只需约 6 MB 运行时，而完整 GUI 是 43 MB —— 给只想在 agent 里用出图能力的用户，可以只发 MCP 那半。
+扫 PE 导入表（手写解析，本机无 `dumpbin` 可用路径）：
+
+| 二进制 | 引用的 Qt DLL |
+|---|---|
+| `image-client-mcp.exe` | **只有 `Qt6Core.dll`** |
+| `ImageClient.exe` | `Qt6Core` `Qt6Gui` `Qt6Qml` `Qt6QuickControls2`（Quick 经 QML 插件运行时加载） |
+
+`oic-core` 已经把 `Qt6::Network` 设为 PUBLIC 依赖（`urlpolicy`/`transport` 需要），但 MCP 侧当前没有任何代码引用 Network 里的符号，静态库的未引用目标文件不参与链接，其对应的 DLL 导入项因此**没有出现在最终 exe 里**。这条有代价边界：**一旦 MCP 调用 `net::Transport`，`Qt6Network.dll` 就成了 MCP 那半的硬依赖**（+1.7 MB，见 §11.1 地板表）。这是可预期的，不是回归。
+
+即 §2.1 的拆分让 MCP 服务端只需约 6 MB 运行时，而完整 GUI 是 43 MB —— 给只想在 agent 里用出图能力的用户，可以只发 MCP 那半。
 
 UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，且常触发杀毒软件启发式告警"。**建议不开。**
 
@@ -452,9 +467,9 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 #### 12.1.1 已移植（2026-09-27）
 
-覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`。
+覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 141 条断言全绿**（endpoints 15 / models 47 / urlpolicy 45 / decode 10 / retrypolicy 24），MSVC `/W4` 无告警。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 156 条用例全绿**（endpoints 15 / models 47 / urlpolicy 45 / decode 10 / retrypolicy 24 / transport 15），MSVC `/W4` 无告警。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -462,7 +477,8 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 - 模型名大小写/空白归一：`GPT-Image-2`、`gpt-image-2.5-flare`、`GPT-Image-2.5-Flare` 必须为真；`gpt-image-25`（无分隔符）、`gpt-image-3`、`dall-e-3` 必须为假。
 - `is_grok_image_model`：`GROK-IMAGINE`、`grok-imagine-image-pro` 为真；缺连字符的 `grok-imagine-imagequality` 与 `grok-imagine-x` 为假。
 - Grok 尺寸推导表（1:1 / 16:9 / 9:16 / 兜底），以及"推导结果恒在支持集内且恒不为 `auto`"的 7×7 网格。
-- 严格 base64（§7.3）与重试分类（§4）已移植（`decode.cpp` / `retrypolicy.cpp`）。**仍未移植**：有界响应体读取与 UTF-8 诊断解码（§7.4），它们需要一个可注入分块的传输层才能测，随 `core/net` 的 QNAM 封装一起落地。
+- 严格 base64（§7.3）与重试分类（§4）已移植（`decode.cpp` / `retrypolicy.cpp`）。
+- **§7.4 有界响应体读取已随 `core/net/transport.cpp` 落地**：`Content-Length` 先做快速拒绝，实际字节按 64 KiB 分块累计并越限即 `abort()`，两条路径各自有用例（`declaredLengthBeyondCapIsRejected` / `unboundedStreamIsRejected`，后者故意不带 `Content-Length`，只有累计器能拦）。诊断解码走 `QString::fromUtf8`，不经 ISO-8859-1。**仍未移植**：把三次响应体检查复用同一份缓存（当前 `Reply::body` 就是一份缓存，调用方直接取，不需要 §7.4 那条"不能重新解析"的额外守卫）。
 
 新增覆盖（旧测试没有，属主动补强）：
 
@@ -472,10 +488,18 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 4. **parseSize 的畸形输入面**：`1024`（无分隔符）、`0x100`、`-5x100`、`1024x1024x512`（Python 的 `split("x",1)` 会让右侧解析失败）、`1e3x1024`。
 5. **视频模型不得被认作图像模型**（`grok-imagine-video-1.5`、`grok-imagine-video`）——视频已下范围，但若分类函数错认它们，就会被推进图像管线。
 
+传输层（`tst_transport.cpp`，15 例）对着 127.0.0.1 上的假端点跑**真实** `Transport::send()`，只把 DNS 换成注入点，因此 §8.3 的固定与逐跳校验走的是生产同一条代码路径：
+
+6. **三件套里 Host 那件**：端点收到的请求行必须是 `host: pin.example.test:<port>` 而不是 IP —— 这条正是失败注入 #2 钉住的性质。
+7. **调用方不能伪造 Host**：`Request::headers` 里塞 `Host: evil.example.net` 必须被传输层覆盖，否则固定地址形同虚设（还能被用来做请求走私）。
+8. **凭据不跨源**：302 到另一 authority 时第二个请求不得带 `Authorization`，且降级为 `GET` 并丢掉 `Content-Type`/`Content-Length`；同源 307 反过来必须保留方法、body 和凭据。链接重定向超过 `kMaxRedirects` 必须拒且实际发出的请求数恰好等于上限+1。
+9. **拒绝在拨号之前**：字面量 `127.0.0.1` URL、解析到 loopback 的未信任域名、URL 内含用户名/密码三种情形，都必须在假端点的请求计数上留下 0 —— 断言"没连出去"而不是"报错了"，否则先连后拦的实现也能骗过测试。
+
 #### 12.1.2 失败路径验证状态
 
 - **退出码机制已验证**：测试二进制在失败条件下返回非零（实测未知函数名调用 → exit 1），ctest 据此判 Failed，所以"绿"不是人眼看输出得出的。
-- **失败注入已验证（2026-09-27）**：把 `retrypolicy.cpp` 的 `status >= 500` 临时改成 `>= 600`（**改实现，不改期望**），`tst_retrypolicy` 随即报红而其余四个测试保持通过，确认断言真的在约束行为而非装饰；随后已改回并复验全绿。当初"改期望值"的做法被权限层正确拦下——那与引入真实 bug 无法区分，改实现才是对的注入点。
+- **失败注入 #1（2026-09-27）**：把 `retrypolicy.cpp` 的 `status >= 500` 临时改成 `>= 600`（**改实现，不改期望**），`tst_retrypolicy` 随即报红而其余四个测试保持通过，确认断言真的在约束行为而非装饰；随后已改回并复验全绿。当初"改期望值"的做法被权限层正确拦下——那与引入真实 bug 无法区分，改实现才是对的注入点。
+- **失败注入 #2（2026-09-27，传输层）**：删掉 `transport.cpp` 里显式设置 `Host:` 的那一行（即退化为 §8.3 描述的错误形态），`tst_transport` 报红 3 条、通过 12 条，红的正好是三个断言 Host 的用例（`pinnedRequestKeepsOriginalHost`、`hostHeaderFromCallerIsOverridden`、`crossAuthorityRedirectDropsCredentialsAndMethod`）。SSRF 拒绝、重定向、有界读取、重试分类全部不受影响 —— 说明这些用例彼此独立，不是"一处改动全场飘红"的那种脆弱套件。改回后 6 个测试二进制复验全绿。
 
 关键必测用例（对应真实故障）：`GPT-Image-2` 大写必须走 `image[]` 分支；`background=transparent` + `gpt-image-2` 必须 4xx 本地拒绝；HTML 错误页伪装的 base64 必须报错而非产出垃圾图；中文上游错误消息不得乱码；400 不得重发 multipart 到第二候选；非 global 解析地址必须拒绝；重定向到 127.0.0.1 必须逐跳拒绝。
 
