@@ -10,6 +10,12 @@
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
+
+#include <string>
+
+#include <windows.h>
+
+#include <aclapi.h>
 #include <QTest>
 #include <QThread>
 #include <QDeadlineTimer>
@@ -104,7 +110,67 @@ private slots:
     void aclPolicy_data();
     void aclPolicy();
     void freshDirectoryAclIsRestricted();
+    void looseInheritedAclIsRepairedNotRefused();
 };
+
+// A directory whose DACL grants Everyone is the case that actually happened on a
+// live run: the parent tree leaked Authenticated Users / BUILTIN\Users, and a
+// check-only design refused to save the image. Windows-only by nature.
+static bool makeWorldReadable(const QString &path, QString *error)
+{
+    SID_IDENTIFIER_AUTHORITY everyoneAuthority = SECURITY_WORLD_SID_AUTHORITY;
+    PSID everyone = nullptr;
+    if (!AllocateAndInitializeSid(&everyoneAuthority, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, &everyone)) {
+        *error = QStringLiteral("AllocateAndInitializeSid failed for Everyone SID");
+        return false;
+    }
+    EXPLICIT_ACCESSW entry = {};
+    entry.grfAccessPermissions = FILE_GENERIC_READ;
+    entry.grfAccessMode = GRANT_ACCESS;
+    entry.grfInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    BuildTrusteeWithSidW(&entry.Trustee, everyone);
+
+    PACL acl = nullptr;
+    bool ok = SetEntriesInAclW(1, &entry, nullptr, &acl) == ERROR_SUCCESS && acl != nullptr;
+    std::wstring target = reinterpret_cast<const wchar_t *>(path.utf16());
+    if (ok) {
+        ok = SetNamedSecurityInfoW(const_cast<LPWSTR>(target.data()), SE_FILE_OBJECT,
+                                   DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                                   acl, nullptr)
+             == ERROR_SUCCESS;
+    }
+    if (acl != nullptr) {
+        LocalFree(acl);
+    }
+    FreeSid(everyone);
+    if (!ok && error != nullptr) {
+        *error = QStringLiteral("could not loosen the ACL of %1").arg(path);
+    }
+    return ok;
+}
+
+void TstAssets::looseInheritedAclIsRepairedNotRefused()
+{
+    // The store creates job directories under its own root, so that is the
+    // directory that has to be loosened for the repair path to be exercised.
+    const QString jobDir = QDir(m_root).filePath(QStringLiteral("loose-job"));
+    QVERIFY(QDir().mkpath(jobDir));
+    QString error;
+    if (!makeWorldReadable(jobDir, &error)) {
+        QSKIP(qPrintable(error));  // some CI images deny ACL writes; that is not a failure
+    }
+
+    // Precondition, so the test cannot pass by accident.
+    QVERIFY2(!oic::store::checkDirectoryAcl(jobDir).ok, "the directory was not loosened as intended");
+
+    oic::store::AssetStore store = makeStore(1024 * 1024);
+    const oic::store::AssetWriteResult written =
+        store.write(QStringLiteral("loose-job"), QStringLiteral("asset-1"), QStringLiteral("image/png"),
+                    QByteArray(16, 'q'));
+    QVERIFY2(written.ok(), qPrintable(written.error));
+    QVERIFY(QFile::exists(written.absolutePath));
+    QVERIFY2(oic::store::checkDirectoryAcl(jobDir).ok, "write() left a world-readable directory in place");
+}
 
 void TstAssets::pathComponentRules_data()
 {

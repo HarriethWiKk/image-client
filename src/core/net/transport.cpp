@@ -126,6 +126,12 @@ Attempt dial(const QUrl &pinned, const QString &hostHeader, const QString &verif
 
     QNetworkRequest outgoing(pinned);
     outgoing.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    // HTTP/2 off, deliberately: Qt enables it by default, and a live OpenAI-compatible
+    // relay (new-api) answered its images/generations route over h2 with
+    // "200 text/html, body: Welcome!" -- a success status carrying a non-answer.
+    // Forcing HTTP/1.1 made the same request return the real JSON error. Measured
+    // 2026-09-27, see SPEC 8.3.
+    outgoing.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
     // Caller headers go first so the two below always win: without an explicit
     // Host the pinned URL would send an IP authority to a vhost router (§8.3),
     // and a caller must not be able to smuggle its own Host either.

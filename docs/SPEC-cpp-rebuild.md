@@ -246,6 +246,7 @@ size : 自由形式 "WxH"，仅做长度 ≤64 校验，不校验白名单（三
 - **ACL 实测结果修正了本节原先的假设**：本机 `%LOCALAPPDATA%` 之下新建目录的 DACL 除当前用户 / `S-1-5-18`（SYSTEM）/ `S-1-5-32-544`（Administrators）之外，还带 **`S-1-15-3-*` 应用容器 capability SID**。这类是沙箱句柄，不是"别的本地用户能读"的路径，因此策略把它们归入 `notes` 而非 `offenders`；其余任何无法识别的授权一律判失败（读不懂就当作有问题，不许蒙过去）。NULL DACL 单独判失败并在消息里说明"等于对所有账户开放"——空 DACL 不是"无权限"而是"全开放"。
 - 配额拒绝发生在**建目录之前**；短写会删掉半成品（截断的图片和完整图片在文件系统上看起来一样）。
 - `relPath` 删除路径先 `cleanPath` 再比较**两侧 canonical 形式**，防目录树里的重解析点把删除指向树外。
+- **"只校验不修复"是错的，已改为校验→修复→再校验**（`enforcePrivateAcl`：显式写入 当前用户 / SYSTEM / Administrators 三条 `FILE_ALL_ACCESS`，并用 `PROTECTED_DACL_SECURITY_INFORMATION` 断开继承）。依据是第一次真机运行：在 `D:\tmp` 下新建的目录继承了 `S-1-5-11`(Authenticated Users) 与 `S-1-5-32-545`(BUILTIN\Users)，只校验的设计于是**拒绝保存出图结果**。老实现的毛病是"建目录不指定 mode"，正确修法是把 mode 显式设成私有，而不是发现不合规就罢工；已存在的目录同样处理（早于本策略建立的 job 目录正是可能松的那个）。
 
 ### 6.2 sqlite schema `[已实现，user_version = 1]`
 
@@ -413,6 +414,7 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
   - `QSslConfiguration::setCaCertificates()` 在 Schannel 后端**确实生效**：同一张自签证书，自定义 CA 列表 → 200；换成系统 297 个根 → `The certificate is self-signed, and untrusted`。§6.3 的"信任本地网关"配置项因此可做，不必写系统证书存储。
   - 强制 TLS 1.2 与强制 TLS 1.3 两条路径都通过，无协议相关差异。
   - **写测试时的坑**：上游 socket 在 `connected` 之前 `write()` 的字节会被丢掉。最初观察到的"偶发 12 秒挂起"就是它造成的，与 Qt 无关；假端点必须把字节缓存到 `connected` 之后再写。
+- **必须显式关掉 HTTP/2**：`QNetworkRequest::Http2AllowedAttribute` 在 Qt 6.8 默认是允许的。2026-09-27 第一次打真实上游（new-api 网关）时，同一条 `POST /v1/images/generations` 在 h2 上拿到的是 **`200 text/html` + 8 字节 `Welcome!`**，HTTP/1.1 才拿到正确 JSON。同一 IP、同一 SNI/Host 形态、同一客户端，只切换这个属性就翻转结果 —— 不是网络抖动也不是 DNS 轮换。教训：**200 + 非 JSON 是最坏的一类失败**（状态码说成功，内容说没这回事），所以 `net/transport.cpp` 的 dial 里钉死 HTTP/1.1 并写明理由。
 - QNAM 默认发送 `accept-encoding: gzip, deflate` 并**自动解压**：§7.4 的上限必须按实际读到的（解压后）字节累计，`Content-Length` 是压缩前长度，只能当快速拒绝的参考，不能当唯一依据。
 - **IPv4 判定不能只靠 `QHostAddress::isGlobal()`**：实测它把 **172.16/12 与 100.64/10 视为 global**（组播 `224/4` 也不在其 IPv4 判定内）。`urlpolicy.cpp` 因此自带保留段表；IPv6 侧仍依赖 Qt 谓词加 ULA，文档段与 Teredo 未枚举 —— 这是已知缺口而非取舍。
 - 所有上游响应体经 §7.4 有界读取。
@@ -519,7 +521,7 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 341 条用例全绿 / 12 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 41 · protocol 69 · parsers 24 · credentials 21），MSVC `/W4` 无告警。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 342 条用例全绿 / 12 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 42 · protocol 69 · parsers 24 · credentials 21），MSVC `/W4` 无告警。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -555,6 +557,15 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 
 关键必测用例（对应真实故障）：`GPT-Image-2` 大写必须走 `image[]` 分支；`background=transparent` + `gpt-image-2` 必须 4xx 本地拒绝；HTML 错误页伪装的 base64 必须报错而非产出垃圾图；中文上游错误消息不得乱码；400 不得重发 multipart 到第二候选；非 global 解析地址必须拒绝；重定向到 127.0.0.1 必须逐跳拒绝。
 
+### 12.1.3 真机验证（2026-09-27，第一次接真实上游）
+
+用一个 new-api 网关跑完整链路，**不经 mock**：协议判定 → 固定 IP 出网 → Schannel TLS → 响应解析 → 容器探针 → 落盘。27.5 s 返回 1.65 MB JSON，解析出 1 张 PNG（1024x1024、1234875 字节），落盘后由**无关解码器**（GDI+）独立确认宽高。
+
+- `/v1/models` 实测只暴露 `gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst` —— §5.2 里「`gpt-image-2.5-*` 沿用 gpt-image-2 的 Images API 路径」这条与真实世界对上了。
+- 响应里 `data[0]` 的键是 `b64_json` / `width` / `height` / `revised_prompt`，**没有 `output_format`**，所以 MIME 只能由 `output_format` 缺省推成 `image/png`（§7.1 的优先级写法成立）。
+- 一次真机运行抓出两个本地假端点结构上不可能发现的 bug：HTTP/2 路由差异（§8.3）与继承 ACL 过松（§6.1）。本地端点永远说 HTTP/1.1、永远建在干净的目录下。**所以 §12 的真机对拍不是收尾仪式，是发现手段**：provider 行为一变就要重跑。
+- 仍待真机覆盖：`url` 分支的下载回退（本次上游只回 b64_json）、Grok 与 Gemini 两条协议、图生图 multipart。
+
 ### 12.2 GUI 冒烟
 
 启动 → 配 profile → 存凭据（断言 sqlite 与任何文件里都无密钥明文）→ 文生图出图 → 图生图带 2 张参考图 → 取消 → 重启后历史仍在 → MCP 进程并发运行时不互相抢锁。
@@ -578,7 +589,7 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 
 ### 13.2 仍待拍板
 
-1. **安装包形态**：portable zip / Inno Setup / MSIX。影响能否写注册表、能否做自动更新，也决定 §11 的体积该按 43 MB 还是 15 MB 报给用户。
+1. **安装包形态** —— 已定（2026-09-27）：**MSIX 一类 setup 安装**。要提前说清连带后果：MSIX 需要打包清单 + **代码签名证书**才能常规分发（未签名只能侧载，且用户要先信任证书）；自动更新在 MSIX 下走 Windows 后台更新或自建 feed，与「portable zip + 自更」是两条路。§11 的体积按打包后实测报告。
 2. **自动更新要不要**？开源 + Windows 下这是一整个子系统；不做就现在明确不做，别留白。
 3. **历史保留默认值**：500 行 / 2 GiB 是我提的起点，需确认。
 4. **上游协议演进策略**：新模型、新枚举、`gpt-image-2.5-*` 之后的下一代怎么跟进（跟随 provider 文档 / 固定季度 / profile 里允许 override），否则 §5.2 会腐烂。

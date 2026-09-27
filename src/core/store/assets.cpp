@@ -327,14 +327,33 @@ AssetWriteResult AssetStore::write(const QString &jobId, const QString &assetId,
         result.error = QStringLiteral("无法创建任务目录 %1").arg(jobDir);
         return result;
     }
-    if (creating) {
+    {
         // SPEC 6.1: the old build created directories with no explicit mode and
-        // left them world-readable. Verify the inherited ACL instead of trusting it.
-        const AclReport acl = checkDirectoryAcl(jobDir);
+        // left them world-readable. Verify the inherited ACL, and repair it when it
+        // is broader than this user -- measured on a scratch tree under D:\, the
+        // inherited grants include Authenticated Users and BUILTIN\Users, so a
+        // check-only design would make saving images impossible there. Runs on
+        // existing directories too: a job dir created before this policy existed is
+        // exactly the one that may be loose.
+        AclReport acl = checkDirectoryAcl(jobDir);
         if (!acl.ok) {
-            QDir(jobDir).removeRecursively();
-            result.error = acl.error.isEmpty() ? QStringLiteral("新建目录 %1 的 ACL 校验未通过").arg(jobDir) : acl.error;
-            return result;
+            QString fixError;
+            if (!enforcePrivateAcl(jobDir, &fixError)) {
+                if (creating) {
+                    QDir(jobDir).removeRecursively();
+                }
+                result.error = fixError;
+                return result;
+            }
+            acl = checkDirectoryAcl(jobDir);
+            if (!acl.ok) {
+                if (creating) {
+                    QDir(jobDir).removeRecursively();
+                }
+                result.error = QStringLiteral("改写后 %1 的 ACL 仍含越权账户：%2")
+                                   .arg(jobDir, acl.verdict.offenders.join(QStringLiteral(", ")));
+                return result;
+            }
         }
     }
 
@@ -396,6 +415,82 @@ bool AssetStore::remove(const QString &relPath, QString *error) const
     if (!QFile::remove(absolute)) {
         if (error != nullptr) {
             *error = QStringLiteral("删除 %1 失败").arg(absolute);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool enforcePrivateAcl(const QString &path, QString *error)
+{
+    // Buffers outlive the PSIDs that point into them: std::vector's heap block is
+    // transferred, not copied, when the outer vector grows.
+    std::vector<std::vector<BYTE>> storage;
+    std::vector<PSID> trustees;
+
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        DWORD size = 0;
+        GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+        storage.emplace_back(size);
+        auto *user = reinterpret_cast<PTOKEN_USER>(storage.back().data());
+        if (GetTokenInformation(token, TokenUser, user, size, &size)) {
+            trustees.push_back(user->User.Sid);
+        } else {
+            storage.pop_back();
+        }
+        CloseHandle(token);
+    }
+
+    auto addKnown = [&storage, &trustees](WELL_KNOWN_SID_TYPE type) {
+        DWORD size = 0;
+        CreateWellKnownSid(type, nullptr, nullptr, &size);
+        storage.emplace_back(size);
+        if (CreateWellKnownSid(type, nullptr, storage.back().data(), &size)) {
+            trustees.push_back(reinterpret_cast<PSID>(storage.back().data()));
+        } else {
+            storage.pop_back();
+        }
+    };
+    addKnown(WinLocalSystemSid);
+    addKnown(WinBuiltinAdministratorsSid);
+
+    if (trustees.empty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("无法取得本机账户的 SID，拒绝改写 ACL");
+        }
+        return false;
+    }
+
+    std::vector<EXPLICIT_ACCESSW> entries;
+    for (PSID sid : trustees) {
+        EXPLICIT_ACCESSW entry = {};
+        entry.grfAccessPermissions = FILE_ALL_ACCESS;
+        entry.grfAccessMode = GRANT_ACCESS;
+        entry.grfInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+        BuildTrusteeWithSidW(&entry.Trustee, sid);
+        entries.push_back(entry);
+    }
+
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(static_cast<ULONG>(entries.size()), entries.data(), nullptr, &acl) != ERROR_SUCCESS
+        || acl == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("构造私有 DACL 失败");
+        }
+        return false;
+    }
+
+    std::wstring target = toWide(path);
+    // PROTECTED_... drops the inherited entries; without it a loose parent would
+    // keep leaking Authenticated Users / BUILTIN\Users through the grant we add.
+    const ULONG result = SetNamedSecurityInfoW(target.data(), SE_FILE_OBJECT,
+                                              DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr,
+                                              nullptr, acl, nullptr);
+    LocalFree(acl);
+    if (result != ERROR_SUCCESS) {
+        if (error != nullptr) {
+            *error = QStringLiteral("设置 %1 的私有 DACL 失败（Win32 错误 %2）").arg(path).arg(result);
         }
         return false;
     }

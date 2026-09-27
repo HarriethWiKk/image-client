@@ -64,6 +64,12 @@ struct AclReport {
 // reported as not-ok rather than as a pass.
 AclReport checkDirectoryAcl(const QString &path);
 
+// Replaces the DACL with one that grants this user, SYSTEM and Administrators
+// only, and stops inheritance so a loose parent cannot leak through. Repairing
+// rather than merely refusing is what makes saving possible on trees whose
+// inherited ACL already includes Authenticated Users / BUILTIN\\Users.
+bool enforcePrivateAcl(const QString &path, QString *error);
+
 struct AssetWriteResult {
     QString relPath;      // <job-id>/<file>
     QString absolutePath;
