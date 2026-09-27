@@ -34,6 +34,9 @@ target_link_libraries(tst_protocol PRIVATE Qt6::Gui)
 # PNG byte constants, decoded by the store probe rather than QtGui).
 oic_add_test(tst_jobs tst_jobs.cpp)
 
+# The bounded pool: real worker QThreads, queued signals, fail-fast submit, cancel, TTL.
+oic_add_test(tst_jobmanager tst_jobmanager.cpp)
+
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
     oic_add_test(tst_credentials tst_credentials.cpp)

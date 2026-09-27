@@ -208,7 +208,7 @@ RequestOutcome sendAndParse(const protocol::OutgoingRequest &out, const JobSpec 
 JobOutcome runJob(const JobSpec &spec, const JobDeps &deps, CancelToken *cancel, QString *error)
 {
     JobOutcome outcome;
-    outcome.jobId = newId();
+    outcome.jobId = spec.jobId.isEmpty() ? newId() : spec.jobId;
     outcome.clientRequestId = newId();
     outcome.status = QStringLiteral("failed");
 

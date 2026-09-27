@@ -21,6 +21,7 @@ namespace oic::jobs {
 // executor reads the secret just-in-time so it never lands in a persisted struct
 // (SPEC 6.3).
 struct JobSpec {
+    QString jobId;           // optional pre-assigned id (JobManager hands one back at submit); empty → runJob generates
     QString profileName;
     QString baseUrl;
     QString protocolHint;    // "auto" | openai | grok | gemini (SPEC 5.1)

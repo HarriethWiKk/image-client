@@ -14,6 +14,7 @@ qt_add_library(oic-core STATIC
     oic/protocol/imageprotocol.h
     oic/protocol/parsers.h
     oic/jobs/executor.h
+    oic/jobs/jobmanager.h
     models.cpp
     endpoints.cpp
     urlpolicy.cpp
@@ -28,6 +29,7 @@ qt_add_library(oic-core STATIC
     protocol/imageprotocol.cpp
     protocol/parsers.cpp
     jobs/executor.cpp
+    jobs/jobmanager.cpp
 )
 
 target_include_directories(oic-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
