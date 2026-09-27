@@ -599,7 +599,13 @@ bool Database::softDeleteJob(const QString &id, qint64 when, QString *error)
     if (!exec(query, error)) {
         return false;
     }
-    return query.numRowsAffected() > 0;
+    if (query.numRowsAffected() == 0) {
+        if (error != nullptr) {
+            *error = QStringLiteral("任务 %1 不存在").arg(id);
+        }
+        return false;
+    }
+    return true;
 }
 
 bool Database::addAsset(const Asset &asset, QString *error)
@@ -780,7 +786,14 @@ PruneReport Database::pruneToLimits(int maxRows, qint64 maxAssetBytes, QString *
                 break;
             }
             remove.addBindValue(text(asset.id));
-            remove.exec();
+            if (!remove.exec()) {
+                // Do not count a row that was not actually deleted: freedBytes and
+                // removedAssets must describe the database, not the intent.
+                if (error != nullptr) {
+                    *error = remove.lastError().text();
+                }
+                break;
+            }
             total -= asset.bytes;
             report.freedBytes += asset.bytes;
             report.removedAssets.append(asset);

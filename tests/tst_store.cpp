@@ -139,6 +139,8 @@ private slots:
     void byteBudgetDropsOldestUnpinnedAssets();
     void twoThreadsWriteConcurrently();
     void concurrentFirstOpenCreatesTheDatabase();
+    void jobDuplicateIdIsRejected();
+    void softDeleteMissingJobReportsNotFound();
     void secretTextNeverEntersDatabaseFiles();
 };
 
@@ -504,6 +506,42 @@ void TstStore::concurrentFirstOpenCreatesTheDatabase()
                             .arg(failures)
                             .arg(kOpeners)
                             .arg(messages.join(QStringLiteral(" | ")))));
+}
+
+// The id is the primary key, so a second insert of the same id must be refused
+// with an error rather than silently overwriting or corrupting the row.
+void TstStore::jobDuplicateIdIsRejected()
+{
+    QString error;
+    auto store = openStore(&error);
+    QVERIFY2(store != nullptr, qPrintable(error));
+
+    QVERIFY2(store->createJob(makeJob(QStringLiteral("dup"), 10), &error), qPrintable(error));
+
+    error.clear();
+    QVERIFY2(!store->createJob(makeJob(QStringLiteral("dup"), 20), &error),
+             "a duplicate primary key must be rejected");
+    QVERIFY(!error.isEmpty());
+
+    // The original row must survive untouched.
+    bool found = false;
+    const oic::store::Job kept = store->job(QStringLiteral("dup"), &found, &error);
+    QVERIFY(found);
+    QCOMPARE(kept.createdAt, 10LL);
+}
+
+// A caller has to tell "no such job" apart from a real database failure, so an
+// update that matched no row must set the error string.
+void TstStore::softDeleteMissingJobReportsNotFound()
+{
+    QString error;
+    auto store = openStore(&error);
+    QVERIFY2(store != nullptr, qPrintable(error));
+
+    error.clear();
+    QVERIFY2(!store->softDeleteJob(QStringLiteral("ghost"), 999, &error),
+             "deleting an unknown id must fail");
+    QVERIFY2(!error.isEmpty(), "the caller needs a reason: no-such-id vs a real DB error");
 }
 
 // The point of SPEC 6.3 is that the key lives only in the Credential Manager, so

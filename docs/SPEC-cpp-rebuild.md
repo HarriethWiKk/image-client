@@ -277,7 +277,8 @@ CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
   2. Qt QSQLITE 驱动下，**存活的 `QSqlQuery` 游标**会让随后的 `BEGIN IMMEDIATE` 报 `database is locked`（实测游标存活 38/8 reps 失败，`finish()` 后 0）。修法：读 `user_version` 的游标用独立作用域 + `finish()`，不让它跨进事务。
   3. `QSqlDatabase::transaction()` 发的是 `BEGIN DEFERRED`——先取读锁、写时才升级；升级时撞别的写者会**立即返回 SQLITE_BUSY 而不走 busy handler**。修法：迁移改用显式 `BEGIN IMMEDIATE`（一开始就拿写锁，能正常等待）。
   三条各自的必要性用消融实验证明：回退 WAL 重试 → 新用例红 10/15；回退游标释放 → 红 11/15；回退 IMMEDIATE → 红 20/20。回归用例 `tst_store::concurrentFirstOpenCreatesTheDatabase`（8 线程同时 open 全新库）修复前红、修复后 30/30 绿。
-  遗留：`pruneToLimits` 仍用 `QSqlDatabase::transaction()`（同类 DEFERRED 隐患），但它不在首次建库路径、当前无失败用例，未在本次改动。
+  `pruneToLimits` 仍用 `QSqlDatabase::transaction()`（`BEGIN DEFERRED`），与迁移用的是同一构造。**但未观察到它失败**：4 个 pruner 线程 + 1 个 writer 各跑 200 次（共 1000 次 prune）实测 0 锁错误——它是用户触发的低频维护操作（当前无生产调用方），不像首次建库那样必然并发首开。因此不改，只作为观察点记录：若将来它被高频或并发调用并出现 `database is locked`，按同一修法（`BEGIN IMMEDIATE`）处理。
+  顺带修正一处真缺陷（2026-09-28，审查门发现）：字节预算块的 `remove.exec()` 原先不检查返回值，DELETE 失败时仍累加 `freedBytes`/`removedAssets`，使报告与实际数据库不符——已补返回值校验，失败即带 error 中断。另修 `softDeleteJob`：不存在的 id 原先返回 false 却不设 `error`，调用方无法区分"没有这条"与真实数据库错误——现补 `任务 %1 不存在`。
 - `user_version` 高于本版本支持值时**拒绝打开**，不做降级迁移。
 - 保留语义（`pruneToLimits`）：行预算只统计 **live 且未 pinned** 的任务，pinned 落在预算之外；软删除的行无论预算多少都被清除；字节预算按 `created_at` 从旧到新丢弃非 pinned 任务的资产，pinned 的资产即使在预算之外也不动。
 - **踩过的坑，必须留在文档里**：默认构造的 `QString` 是 **null**（实测 `QString().isNull()` 为真，`QStringLiteral("").isNull()` 为假），`QSqlQuery` 把 null 绑成 SQL NULL，于是 `NOT NULL` 文本列直接拒绝插入。绑定边界统一走 `text()` 归一化为空串，"没填"在这些列上的含义就是空字符串。
@@ -538,7 +539,7 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`、`tst_jobs.cpp`、`tst_jobmanager.cpp`、`tst_jobs_integration.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 368 条用例全绿 / 15 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 15 · assets 42 · protocol 69 · parsers 24 · credentials 21 · jobs 14 · jobmanager 7 · jobs_integration 4），MSVC `/W4` 无告警。jobs 三层于 2026-09-28 落地（§9.2 落地记录）；store 于同日 +1（`concurrentFirstOpenCreatesTheDatabase`，§6.2 并发首次开库修复）。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 370 条用例全绿 / 15 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 17 · assets 42 · protocol 69 · parsers 24 · credentials 21 · jobs 14 · jobmanager 7 · jobs_integration 4），MSVC `/W4` 无告警。jobs 三层于 2026-09-28 落地（§9.2 落地记录）；store 于同日 +3（`concurrentFirstOpenCreatesTheDatabase` + `jobDuplicateIdIsRejected` + `softDeleteMissingJobReportsNotFound`，§6.2）。
 
 覆盖 §4 与 §5.2 的原有断言：
 
