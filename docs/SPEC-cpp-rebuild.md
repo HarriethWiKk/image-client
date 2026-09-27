@@ -557,7 +557,7 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 
 关键必测用例（对应真实故障）：`GPT-Image-2` 大写必须走 `image[]` 分支；`background=transparent` + `gpt-image-2` 必须 4xx 本地拒绝；HTML 错误页伪装的 base64 必须报错而非产出垃圾图；中文上游错误消息不得乱码；400 不得重发 multipart 到第二候选；非 global 解析地址必须拒绝；重定向到 127.0.0.1 必须逐跳拒绝。
 
-### 12.1.3 真机验证（2026-09-27，第一次接真实上游）
+#### 12.1.3 真机验证（2026-09-27，第一次接真实上游）
 
 用一个 new-api 网关跑完整链路，**不经 mock**：协议判定 → 固定 IP 出网 → Schannel TLS → 响应解析 → 容器探针 → 落盘。27.5 s 返回 1.65 MB JSON，解析出 1 张 PNG（1024x1024、1234875 字节），落盘后由**无关解码器**（GDI+）独立确认宽高。
 
