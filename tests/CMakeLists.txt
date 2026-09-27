@@ -37,6 +37,9 @@ oic_add_test(tst_jobs tst_jobs.cpp)
 # The bounded pool: real worker QThreads, queued signals, fail-fast submit, cancel, TTL.
 oic_add_test(tst_jobmanager tst_jobmanager.cpp)
 
+# jobs <-> real net::Transport over loopback: proves the seam does not bypass SSRF/pinning.
+oic_add_test(tst_jobs_integration tst_jobs_integration.cpp)
+
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
     oic_add_test(tst_credentials tst_credentials.cpp)
