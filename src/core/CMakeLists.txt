@@ -13,6 +13,7 @@ qt_add_library(oic-core STATIC
     oic/secret/credentials.h
     oic/protocol/imageprotocol.h
     oic/protocol/parsers.h
+    oic/jobs/executor.h
     models.cpp
     endpoints.cpp
     urlpolicy.cpp
@@ -26,6 +27,7 @@ qt_add_library(oic-core STATIC
     secret/credentials.cpp
     protocol/imageprotocol.cpp
     protocol/parsers.cpp
+    jobs/executor.cpp
 )
 
 target_include_directories(oic-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

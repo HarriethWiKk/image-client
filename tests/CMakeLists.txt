@@ -30,6 +30,10 @@ oic_add_test(tst_parsers tst_parsers.cpp)
 # Fixtures are real encoded images, which needs the GUI codecs.
 target_link_libraries(tst_protocol PRIVATE Qt6::Gui)
 
+# jobs orchestrates the core over injected seams; GUI-less (fixtures are header-only
+# PNG byte constants, decoded by the store probe rather than QtGui).
+oic_add_test(tst_jobs tst_jobs.cpp)
+
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
     oic_add_test(tst_credentials tst_credentials.cpp)
