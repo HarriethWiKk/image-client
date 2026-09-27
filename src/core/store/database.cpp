@@ -123,11 +123,12 @@ Asset assetFromQuery(const QSqlQuery &query)
     asset.height = query.value(8).toInt();
     asset.sha256 = query.value(9).toString();
     asset.createdAt = query.value(10).toLongLong();
+    asset.role = query.value(11).toString();
     return asset;
 }
 
 const char *kAssetColumns =
-    " id, job_id, ordinal, filename, rel_path, bytes, mime, width, height, sha256, created_at";
+    " id, job_id, ordinal, filename, rel_path, bytes, mime, width, height, sha256, created_at, role";
 
 // Statements are prepared here and executed by the caller, which is the only
 // reason the split exists: exec-ing inside this helper would run the statement
@@ -200,7 +201,7 @@ bool ensureWalMode(QSqlDatabase &database, QString *error)
 
 int Database::schemaVersion()
 {
-    return 1;
+    return 2;
 }
 
 Database::Database(QString filePath)
@@ -342,11 +343,56 @@ bool Database::applyMigrations(QString *error)
     }
     const auto rollback = [&database]() { QSqlQuery(database).exec(QStringLiteral("ROLLBACK")); };
 
-    for (const char *statement : kSchemaV1) {
-        QSqlQuery query(database);
-        if (!run(query, QString::fromLatin1(statement), error) || !exec(query, error)) {
+    // Re-read user_version under the write lock. BEGIN IMMEDIATE serializes writers, so a
+    // second opener (another JobManager worker, or the MCP process) that finished migrating
+    // while we waited is now visible. Without this re-check both racing openers would run
+    // the non-idempotent v2 ALTER and the loser would fail with "duplicate column name:
+    // role" -- measured 3/8 under tst_store::concurrentFirstOpenCreatesTheDatabase.
+    {
+        QSqlQuery recheck(database);
+        if (recheck.exec(QStringLiteral("PRAGMA user_version")) && recheck.next()) {
+            current = recheck.value(0).toInt();
+        }
+        recheck.finish();
+    }
+    if (current > schemaVersion()) {
+        rollback();
+        m_lastError = QStringLiteral("数据库由更新的版本写入（%1 > %2），拒绝降级打开")
+                          .arg(current)
+                          .arg(schemaVersion());
+        if (error != nullptr) {
+            *error = m_lastError;
+        }
+        return false;
+    }
+    if (current == schemaVersion()) {
+        rollback();  // a racing opener already migrated; nothing left to do
+        return true;
+    }
+
+    // v0 -> v1: base schema.
+    if (current < 1) {
+        for (const char *statement : kSchemaV1) {
+            QSqlQuery query(database);
+            if (!run(query, QString::fromLatin1(statement), error) || !exec(query, error)) {
+                rollback();
+                m_lastError = *error;
+                return false;
+            }
+        }
+    }
+
+    // v1 -> v2: assets gain a role column so reference images (edit inputs) can be stored
+    // alongside results and told apart (SPEC 6.2). ADD COLUMN with a default is safe on a
+    // populated table -- existing rows come back as 'result'.
+    if (current < 2) {
+        QSqlQuery alter(database);
+        if (!alter.exec(QStringLiteral("ALTER TABLE assets ADD COLUMN role TEXT NOT NULL DEFAULT 'result'"))) {
             rollback();
-            m_lastError = *error;
+            m_lastError = alter.lastError().text();
+            if (error != nullptr) {
+                *error = QStringLiteral("迁移到 v2 失败：%1").arg(m_lastError);
+            }
             return false;
         }
     }
@@ -614,7 +660,7 @@ bool Database::addAsset(const Asset &asset, QString *error)
     QSqlQuery query(database);
     if (!run(query,
              "INSERT INTO assets (id, job_id, ordinal, filename, rel_path, bytes, mime, width, height, sha256,"
-             " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             " created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
              error)) {
         return false;
     }
@@ -629,6 +675,7 @@ bool Database::addAsset(const Asset &asset, QString *error)
     query.addBindValue(asset.height);
     query.addBindValue(text(asset.sha256));
     query.addBindValue(asset.createdAt > 0 ? asset.createdAt : nowSeconds());
+    query.addBindValue(text(asset.role.isEmpty() ? QStringLiteral("result") : asset.role));
     if (!exec(query, error)) {
         m_lastError = *error;
         return false;

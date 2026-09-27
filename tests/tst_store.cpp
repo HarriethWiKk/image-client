@@ -141,6 +141,8 @@ private slots:
     void concurrentFirstOpenCreatesTheDatabase();
     void jobDuplicateIdIsRejected();
     void softDeleteMissingJobReportsNotFound();
+    void assetRoleRoundTrips();
+    void migratesV1DatabaseAddingRoleColumn();
     void secretTextNeverEntersDatabaseFiles();
 };
 
@@ -176,7 +178,7 @@ void TstStore::freshFileGetsSchemaVersion()
     QString error;
     auto store = openStore(&error);
     QVERIFY2(store != nullptr, qPrintable(error));
-    QCOMPARE(oic::store::Database::schemaVersion(), 1);
+    QCOMPARE(oic::store::Database::schemaVersion(), 2);
     QVERIFY(QFileInfo::exists(m_file));
 }
 
@@ -542,6 +544,94 @@ void TstStore::softDeleteMissingJobReportsNotFound()
     QVERIFY2(!store->softDeleteJob(QStringLiteral("ghost"), 999, &error),
              "deleting an unknown id must fail");
     QVERIFY2(!error.isEmpty(), "the caller needs a reason: no-such-id vs a real DB error");
+}
+
+// Assets carry a role so reference images (edit inputs) can be stored next to results and
+// told apart. makeAsset leaves it at the default "result".
+void TstStore::assetRoleRoundTrips()
+{
+    QString error;
+    auto store = openStore(&error);
+    QVERIFY2(store != nullptr, qPrintable(error));
+    QVERIFY2(store->createJob(makeJob(QStringLiteral("j1"), 10), &error), qPrintable(error));
+
+    QVERIFY2(store->addAsset(makeAsset(QStringLiteral("a-res"), QStringLiteral("j1"), 100, 10), &error),
+             qPrintable(error));
+    oic::store::Asset ref = makeAsset(QStringLiteral("a-ref"), QStringLiteral("j1"), 50, 11);
+    ref.role = QStringLiteral("reference");
+    QVERIFY2(store->addAsset(ref, &error), qPrintable(error));
+
+    const QList<oic::store::Asset> assets = store->assetsForJob(QStringLiteral("j1"), &error);
+    QCOMPARE(assets.size(), 2);
+    QString roleOfResult;
+    QString roleOfRef;
+    for (const oic::store::Asset &asset : assets) {
+        if (asset.id == QLatin1String("a-res"))
+            roleOfResult = asset.role;
+        else if (asset.id == QLatin1String("a-ref"))
+            roleOfRef = asset.role;
+    }
+    QCOMPARE(roleOfResult, QStringLiteral("result"));
+    QCOMPARE(roleOfRef, QStringLiteral("reference"));
+}
+
+// A database written by the previous schema version (user_version 1, assets with no role
+// column) must be upgraded in place, not refused: the ALTER backfills role='result' and
+// user_version becomes 2, with existing rows intact.
+void TstStore::migratesV1DatabaseAddingRoleColumn()
+{
+    {
+        QSqlDatabase v1 = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("tst-store-v1"));
+        v1.setDatabaseName(m_file);
+        QVERIFY(v1.open());
+        QSqlQuery q(v1);
+        QVERIFY(q.exec(QStringLiteral("PRAGMA foreign_keys=ON")));
+        QVERIFY(q.exec(QStringLiteral(
+            "CREATE TABLE jobs (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,"
+            " mode TEXT NOT NULL, protocol TEXT NOT NULL, profile TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',"
+            " prompt TEXT NOT NULL DEFAULT '', size TEXT NOT NULL DEFAULT '', n INTEGER NOT NULL DEFAULT 1,"
+            " status TEXT NOT NULL, endpoint TEXT NOT NULL DEFAULT '', client_request_id TEXT NOT NULL DEFAULT '',"
+            " error TEXT NOT NULL DEFAULT '', duration_ms INTEGER NOT NULL DEFAULT 0,"
+            " request_json TEXT NOT NULL DEFAULT '', result_json TEXT NOT NULL DEFAULT '',"
+            " pinned INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(q.exec(QStringLiteral(
+            "CREATE TABLE assets (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,"
+            " ordinal INTEGER NOT NULL, filename TEXT NOT NULL, rel_path TEXT NOT NULL, bytes INTEGER NOT NULL,"
+            " mime TEXT NOT NULL DEFAULT '', width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,"
+            " sha256 TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)")));
+        QVERIFY(q.exec(QStringLiteral(
+            "INSERT INTO jobs (id, created_at, updated_at, mode, protocol, profile, status)"
+            " VALUES ('j1', 10, 10, 'generate', 'openai', 'default', 'succeeded')")));
+        QVERIFY(q.exec(QStringLiteral(
+            "INSERT INTO assets (id, job_id, ordinal, filename, rel_path, bytes, created_at)"
+            " VALUES ('a1', 'j1', 0, 'a1.png', 'j1/a1.png', 100, 10)")));
+        QVERIFY(q.exec(QStringLiteral("PRAGMA user_version=1")));
+        q.finish();
+        v1.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("tst-store-v1"));
+    }
+
+    QString error;
+    auto store = openStore(&error);
+    QVERIFY2(store != nullptr, qPrintable(error));
+    QCOMPARE(oic::store::Database::schemaVersion(), 2);
+
+    const QList<oic::store::Asset> assets = store->assetsForJob(QStringLiteral("j1"), &error);
+    QCOMPARE(assets.size(), 1);
+    QCOMPARE(assets.at(0).id, QStringLiteral("a1"));
+    QCOMPARE(assets.at(0).role, QStringLiteral("result"));  // backfilled by the ALTER default
+
+    store.reset();  // close before probing the file with a separate connection
+    QSqlDatabase probe = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("tst-store-v2"));
+    probe.setDatabaseName(m_file);
+    QVERIFY(probe.open());
+    QSqlQuery q(probe);
+    QVERIFY(q.exec(QStringLiteral("PRAGMA user_version")));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toInt(), 2);
+    q.finish();
+    probe.close();
+    QSqlDatabase::removeDatabase(QStringLiteral("tst-store-v2"));
 }
 
 // The point of SPEC 6.3 is that the key lives only in the Credential Manager, so

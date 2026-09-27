@@ -60,6 +60,9 @@ struct Asset {
     int height = 0;
     QString sha256;
     qint64 createdAt = 0;
+    // "result" (a generated image) or "reference" (an edit input), so reference images can
+    // be stored alongside results and told apart. Added in user_version 2 (SPEC 6.2).
+    QString role = QStringLiteral("result");
 };
 
 struct PruneReport {
