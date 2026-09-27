@@ -446,6 +446,17 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 `[冻结]` GUI 线程不做网络。任务在 bounded worker 池（默认 2，队列 8）执行，状态经信号回主线程。取消是协作式的：轮询 `should_cancel` + `deadline_at`，睡眠以 0.5 s 为单位切片。上游 HTTP 请求进行中**不能**被中途打断（旧行为，接受此限制并在 UI 上明示"取消将在当前请求结束后生效"）。
 
+**落地记录（2026-09-28，`jobs/executor.cpp` + `jobs/jobmanager.cpp`）**：
+
+- 分两层：**纯同步 `runJob(spec, deps, cancel, error)`** 跑完一个任务的完整管线（`secret → prepare → transport → parsers → probe → store`），无线程；**`JobManager`（QObject）** 是它外面的有界池。MCP 侧（§8.2「提交并等待、有截止」）直接调 `runJob` 带 deadline、不经池；GUI 侧用 `JobManager`。
+- 网络/密钥/时钟/取图/字节上限全是注入 seam（`Sender` / `SecretReader` / `Clock` / `MediaFetcher` / `MediaLimits`），沿用本仓 `Resolver` / `MediaFetcher` 的既有风格，因此整条管线可离线测；默认实现由 `makeDefaultDeps()` 用一个 `net::Transport` 接上。
+- **池的形状**：`kMaxConcurrentJobs`(2) 个 `QThread::create` worker + `kMaxPendingJobs`(8) 有界待发队列 + `kMaxLiveJobs`(64) 内存活跃上限；队列/活跃满时 `submit()` **fail-fast** 返回错误（有界即有界，不阻塞调用线程）。状态经 `submitted` / `started` / `finished` 三个 **queued 信号**回 GUI 线程（`JobOutcome` 因此注册为 metatype）。
+- **每 worker 无需额外 Database 管道**：`runJob` 在**调用线程内**自建 `store::Database`，连接名 `oic-store-<threadId>` 天然落在 worker 线程上；并发写者靠 WAL + `busy_timeout=5000`（§6.2）共存。
+- **取消 / 超时 / 超总量一律「零落盘」**：图片先在内存聚合（上限即解析器已强制的 `kMaxGeneratedMediaBytes`），**只有整任务成功才 `AssetStore::write` + `addAsset`**；中途失败 `rollback()` 删掉已写文件。与 §7.1 `totalSizeCapAbortsTheWholeResult` 的「失败即零落盘」同侧。取消是协作式的：候选之间、Gemini n 次串行子请求之间、以及 `deadline_at = start + kMaxJobRuntimeSeconds`(900s) 处轮询；`Transport::send` 阻塞中不可打断（本节冻结限制），故「取消在当前请求结束后生效」。
+- **两个时钟要分清**：job 截止（900s）走**注入 `Clock`**，jobs 层可测；单请求超时（`kDefaultTimeoutSeconds` 500s）是 `transport.cpp` 内部真实 `QTimer`，不可注入、归 `tst_transport` 测——注入假 `Clock` 验不到它。
+- 端点候选循环把 §4 的分类落到 job 级：`refusesRetryAsClientError` 为真即**停、不发第二候选**（重复计费防护），5xx / upstream / 404 / 405 / html 才继续；2xx 但解析失败按硬失败处理，不再探测。
+- **已知缺口（非静默丢）**：§3 的 `kMaxPartialImages` 与本节「流式 partial」暂**未实现**——当前 `transport` 读完整响应体、无 SSE 消费，故 partial 展示推迟到将来引入 SSE 传输 + GUI 任务时再做。
+
 ---
 
 ## 10. 从旧仓继承的坑清单（勿重新发现）
@@ -519,9 +530,9 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 #### 12.1.1 已移植（2026-09-27）
 
-覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`。
+覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`、`tst_jobs.cpp`、`tst_jobmanager.cpp`、`tst_jobs_integration.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 342 条用例全绿 / 12 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 42 · protocol 69 · parsers 24 · credentials 21），MSVC `/W4` 无告警。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 367 条用例全绿 / 15 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 42 · protocol 69 · parsers 24 · credentials 21 · jobs 14 · jobmanager 7 · jobs_integration 4），MSVC `/W4` 无告警。jobs 三层于 2026-09-28 落地（§9.2 落地记录）。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -554,6 +565,8 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 - **退出码机制已验证**：测试二进制在失败条件下返回非零（实测未知函数名调用 → exit 1），ctest 据此判 Failed，所以"绿"不是人眼看输出得出的。
 - **失败注入 #1（2026-09-27）**：把 `retrypolicy.cpp` 的 `status >= 500` 临时改成 `>= 600`（**改实现，不改期望**），`tst_retrypolicy` 随即报红而其余四个测试保持通过，确认断言真的在约束行为而非装饰；随后已改回并复验全绿。当初"改期望值"的做法被权限层正确拦下——那与引入真实 bug 无法区分，改实现才是对的注入点。
 - **失败注入 #2（2026-09-27，传输层）**：删掉 `transport.cpp` 里显式设置 `Host:` 的那一行（即退化为 §8.3 描述的错误形态），`tst_transport` 报红 3 条、通过 12 条，红的正好是三个断言 Host 的用例（`pinnedRequestKeepsOriginalHost`、`hostHeaderFromCallerIsOverridden`、`crossAuthorityRedirectDropsCredentialsAndMethod`）。SSRF 拒绝、重定向、有界读取、重试分类全部不受影响 —— 说明这些用例彼此独立，不是"一处改动全场飘红"的那种脆弱套件。改回后 6 个测试二进制复验全绿。
+- **失败注入 #7（2026-09-28，jobs 执行器）**：把 `executor.cpp` 里「客户端错误即停」的 `refusesRetryAsClientError` 分支改成永不触发 —— `tst_jobs` 恰好红 1 条（`clientErrorStopsWithoutResendingMultipart`，实测 `net->calls` 变 2、期望 1），其余 13 条不动。钉的正是 §4 的重复计费防护：400 客户端错误绝不把 multipart 重发到第二候选。已还原复验。
+- **失败注入 #8（2026-09-28，JobManager 池）**：把 worker 数改成 `maxConcurrent * 3` —— `tst_jobmanager` 红 2 条（`concurrencyIsBoundedByConfig` 的 `maxActive>2`；`submitFailsFastWhenQueueFull` 的 `d.isEmpty()` 变假，因为多余 worker 把队列抽干），其余 3 条不动，证明「并发上限」与「队列满 fail-fast」两条都真在约束池大小。这次注入还**顺带炸出一个测试自身的析构顺序死锁**：`ReleaseGuard` 若声明在 `JobManager` 之前，则 manager 先析构、`thread->wait()` 撞上仍被假 sender 阻塞的 worker → 挂死（CI 会超时而非报红）。已把 guard 移到 manager 之后声明（先析构、先放行），还原注入后复验 15 个二进制全绿。**教训**：阻塞式假件 + RAII 释放时，释放者的声明顺序必须在被守护对象之后，否则一次失败会表现成超时挂起而不是可诊断的断言。
 
 关键必测用例（对应真实故障）：`GPT-Image-2` 大写必须走 `image[]` 分支；`background=transparent` + `gpt-image-2` 必须 4xx 本地拒绝；HTML 错误页伪装的 base64 必须报错而非产出垃圾图；中文上游错误消息不得乱码；400 不得重发 multipart 到第二候选；非 global 解析地址必须拒绝；重定向到 127.0.0.1 必须逐跳拒绝。
 
