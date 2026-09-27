@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QList>
+#include <QSemaphore>
 #include <QStringList>
 #include <memory>
 #include <QSqlDatabase>
@@ -137,6 +138,7 @@ private slots:
     void retentionKeepsNewestAndPinned();
     void byteBudgetDropsOldestUnpinnedAssets();
     void twoThreadsWriteConcurrently();
+    void concurrentFirstOpenCreatesTheDatabase();
     void secretTextNeverEntersDatabaseFiles();
 };
 
@@ -434,6 +436,74 @@ void TstStore::twoThreadsWriteConcurrently()
     auto store = openStore(&error);
     QVERIFY2(store != nullptr, qPrintable(error));
     QCOMPARE(store->listJobs(100, 0, false, &error).size(), 50);
+}
+
+// A thread that opens the database at a shared starting gate, so every opener
+// reaches Database::open() as close to simultaneously as possible.
+class FirstOpener : public QThread {
+public:
+    FirstOpener(QString path, QSemaphore *gate)
+        : m_path(std::move(path)), m_gate(gate)
+    {
+    }
+
+    QString errorText() const { return m_error; }
+    bool opened() const { return m_opened; }
+
+protected:
+    void run() override
+    {
+        m_gate->acquire();  // block until the test releases all openers at once
+        oic::store::Database database(m_path);
+        QString error;
+        m_opened = database.open(&error);
+        if (!m_opened) {
+            m_error = error;
+        }
+        database.close();
+    }
+
+private:
+    QString m_path;
+    QSemaphore *m_gate = nullptr;
+    QString m_error;
+    bool m_opened = false;
+};
+
+// SPEC 6.2's WAL switch is a one-time, exclusive schema change: switching the
+// journal mode on a brand-new file takes an exclusive lock that the busy handler
+// does NOT cover. When several threads (JobManager's workers) open a *fresh*
+// database at the same time, the losers used to fail with "database is locked"
+// instead of waiting. This is the case twoThreadsWriteConcurrently misses: it
+// opens the store once first, so WAL is already set before the threads race.
+void TstStore::concurrentFirstOpenCreatesTheDatabase()
+{
+    const int kOpeners = 8;
+    QSemaphore gate;
+    QList<FirstOpener *> openers;
+    for (int i = 0; i < kOpeners; ++i)
+        openers.append(new FirstOpener(m_file, &gate));
+
+    for (FirstOpener *opener : openers)
+        opener->start();
+    gate.release(kOpeners);  // start them together
+
+    int failures = 0;
+    QStringList messages;
+    for (FirstOpener *opener : openers) {
+        QVERIFY2(opener->wait(20000), "an opener should not hang");
+        if (!opener->opened()) {
+            ++failures;
+            messages.append(opener->errorText());
+        }
+        delete opener;
+    }
+
+    QVERIFY2(failures == 0,
+             qPrintable(QStringLiteral("%1/%2 concurrent first opens failed: %3")
+                            .arg(failures)
+                            .arg(kOpeners)
+                            .arg(messages.join(QStringLiteral(" | ")))));
 }
 
 // The point of SPEC 6.3 is that the key lives only in the Credential Manager, so

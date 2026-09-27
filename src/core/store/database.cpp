@@ -163,6 +163,39 @@ bool exec(QSqlQuery &query, QString *error)
     return false;
 }
 
+// Switching a fresh database to WAL is a one-time, exclusive schema change, and
+// the busy handler does NOT cover it: with several threads (JobManager's workers)
+// opening the same brand-new file at once, the losers used to fail with
+// "database is locked" instead of waiting -- observed 15/30 failures in
+// tst_jobmanager. `PRAGMA journal_mode=WAL` is also idempotent: on a database that
+// is already WAL it just reports back "wal" without taking a write lock, so the
+// retry below costs nothing on the common (already-migrated) path. A lost race is
+// expected contention, not a hard error, hence retry with a short backoff.
+//
+// Deliberately no separate "read the mode first" step: Qt's QSQLITE driver leaves
+// the cursor open after next(), and a second QSqlQuery on the same connection then
+// makes the switch fail with "cannot change into wal mode from within a
+// transaction" (measured, 8/8 openers). Reusing one query, or writing directly, is
+// what works.
+bool ensureWalMode(QSqlDatabase &database, QString *error)
+{
+    constexpr int kMaxAttempts = 200;  // ~2 s at 10 ms; a first-open race settles in microseconds
+    QString lastReason;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        QSqlQuery query(database);
+        if (query.exec(QStringLiteral("PRAGMA journal_mode=WAL")) && query.next()
+            && query.value(0).toString().compare(QStringLiteral("wal"), Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+        lastReason = query.lastError().text();
+        QThread::msleep(10);
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("设置 WAL 失败：%1").arg(lastReason);
+    }
+    return false;
+}
+
 }  // namespace
 
 int Database::schemaVersion()
@@ -228,19 +261,26 @@ bool Database::open(QString *error)
         return false;
     }
 
-    QSqlQuery pragma(database);
+    {
+        // Scoped so the PRAGMA cursor is closed before WAL/migration run: a live
+        // QSqlQuery on this connection makes the later BEGIN IMMEDIATE contend badly
+        // under concurrent first-opens (see applyMigrations).
+        QSqlQuery pragma(database);
+        // Set the busy timeout before any lock-taking statement, so contention below
+        // waits instead of failing immediately. (connectOptions also sets it; this is
+        // explicit and also covers the case where a driver ignored the option.)
+        pragma.exec(QStringLiteral("PRAGMA busy_timeout=5000"));
+        pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
+    }
+
     // WAL: the GUI and the MCP server are separate processes over one file
     // (SPEC 6.1 allows them to coexist), and rollback-journal mode blocks the
-    // second writer for the whole transaction.
-    if (!pragma.exec(QStringLiteral("PRAGMA journal_mode=WAL"))) {
-        m_lastError = QStringLiteral("设置 WAL 失败：%1").arg(pragma.lastError().text());
-        if (error != nullptr) {
-            *error = m_lastError;
-        }
+    // second writer for the whole transaction. See ensureWalMode() for why this is
+    // a read-then-switch with retry rather than a single PRAGMA.
+    if (!ensureWalMode(database, error)) {
+        m_lastError = error != nullptr ? *error : QStringLiteral("设置 WAL 失败");
         return false;
     }
-    pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
-    pragma.exec(QStringLiteral("PRAGMA busy_timeout=5000"));
 
     if (!applyMigrations(error)) {
         return false;
@@ -251,15 +291,24 @@ bool Database::open(QString *error)
 
 bool Database::applyMigrations(QString *error)
 {
-    QSqlQuery version(m_filePath.isEmpty() ? QSqlDatabase() : QSqlDatabase::database(m_connectionName, false));
-    if (!version.exec(QStringLiteral("PRAGMA user_version")) || !version.next()) {
-        m_lastError = QStringLiteral("读取 user_version 失败");
-        if (error != nullptr) {
-            *error = m_lastError;
+    int current = 0;
+    {
+        // The cursor must not survive into the BEGIN below: Qt's QSQLITE driver keeps
+        // the statement's read state alive as long as the QSqlQuery lives, and a
+        // following BEGIN IMMEDIATE on the same connection then fails with "database
+        // is locked" under contention (measured: 38/8 reps with the cursor alive,
+        // 0 with it closed). Scope it and finish() before opening the transaction.
+        QSqlQuery version(m_filePath.isEmpty() ? QSqlDatabase() : QSqlDatabase::database(m_connectionName, false));
+        if (!version.exec(QStringLiteral("PRAGMA user_version")) || !version.next()) {
+            m_lastError = QStringLiteral("读取 user_version 失败");
+            if (error != nullptr) {
+                *error = m_lastError;
+            }
+            return false;
         }
-        return false;
+        current = version.value(0).toInt();
+        version.finish();
     }
-    const int current = version.value(0).toInt();
     if (current > schemaVersion()) {
         m_lastError = QStringLiteral("数据库由更新的版本写入（%1 > %2），拒绝降级打开")
                           .arg(current)
@@ -275,18 +324,28 @@ bool Database::applyMigrations(QString *error)
     }
 
     QSqlDatabase database = QSqlDatabase::database(m_connectionName, false);
-    if (!database.transaction()) {
-        m_lastError = database.lastError().text();
+    // BEGIN IMMEDIATE, not QSqlDatabase::transaction() (which issues BEGIN DEFERRED).
+    // A DEFERRED transaction takes a read lock first and only upgrades to a write
+    // lock at the first write; if another connection holds the write lock by then,
+    // SQLite returns SQLITE_BUSY *without* invoking the busy handler -- so the 5000
+    // ms busy_timeout is bypassed. Concurrent first-opens were failing 19/8 reps
+    // that way. IMMEDIATE takes the write lock up front, so contention waits out the
+    // busy timeout instead of erroring. Measured: 0 failures with IMMEDIATE vs 19
+    // with DEFERRED, same reproduction.
+    QSqlQuery begin(database);
+    if (!begin.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+        m_lastError = begin.lastError().text();
         if (error != nullptr) {
             *error = QStringLiteral("开启迁移事务失败：%1").arg(m_lastError);
         }
         return false;
     }
+    const auto rollback = [&database]() { QSqlQuery(database).exec(QStringLiteral("ROLLBACK")); };
 
     for (const char *statement : kSchemaV1) {
         QSqlQuery query(database);
         if (!run(query, QString::fromLatin1(statement), error) || !exec(query, error)) {
-            database.rollback();
+            rollback();
             m_lastError = *error;
             return false;
         }
@@ -296,16 +355,17 @@ bool Database::applyMigrations(QString *error)
     // user_version does not accept a bound parameter, hence the guarded sprintf of
     // an integer we produced ourselves.
     if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(schemaVersion()))) {
-        database.rollback();
+        rollback();
         m_lastError = bump.lastError().text();
         if (error != nullptr) {
             *error = QStringLiteral("写入 user_version 失败：%1").arg(m_lastError);
         }
         return false;
     }
-    if (!database.commit()) {
-        database.rollback();
-        m_lastError = database.lastError().text();
+    QSqlQuery commit(database);
+    if (!commit.exec(QStringLiteral("COMMIT"))) {
+        rollback();
+        m_lastError = commit.lastError().text();
         if (error != nullptr) {
             *error = QStringLiteral("提交迁移失败：%1").arg(m_lastError);
         }
