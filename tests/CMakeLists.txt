@@ -26,6 +26,7 @@ target_link_libraries(tst_imageprobe PRIVATE Qt6::Gui)
 oic_add_test(tst_store tst_store.cpp)
 oic_add_test(tst_assets tst_assets.cpp)
 oic_add_test(tst_protocol tst_protocol.cpp)
+oic_add_test(tst_parsers tst_parsers.cpp)
 # Fixtures are real encoded images, which needs the GUI codecs.
 target_link_libraries(tst_protocol PRIVATE Qt6::Gui)
 

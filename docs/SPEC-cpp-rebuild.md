@@ -177,6 +177,7 @@ GROK_RESOLUTION_VALUES = {"",1k,2k}   GROK_RESPONSE_FORMAT_VALUES = {"",url,b64_
 - 参考图来源三选一（按存在性优先）：`data_url` / `dataUrl` / `url`。data URL 必须是 `;base64`，`Content-Type` 必须 `image/*`，否则报错。
 - `edit_images` 允许是 list 或单个 dict（旧字段 `edit_image` 为 dict 时也接受）；空则报"图生图模式下请先上传参考图"；超过 16 张报错。
 - 逐张累计字节，超 30 MiB 报错（**不是**逐张 30 MiB）。
+- **新增（旧实现没有）**：解码后还要过 §6.4 的容器探针，认不出是图片就拒收。严格 base64 只证明"这串字符是 base64"，不证明"这是图片" —— `data:image/png;base64,<!DOCTYPE html>…` 在旧管线里能一路走到落盘，变成一个谁都打不开的 `.png`。同一个 §7.3 想防的故障，只是在更早一步拦住。
 
 ### 5.4 Grok 路径
 
@@ -213,6 +214,8 @@ size : 自由形式 "WxH"，仅做长度 ≤64 校验，不校验白名单（三
 2. 剥掉 model 的 `models/` 前缀，按 RFC 3986 unreserved 集 `-._~` 做 percent-encode。
 3. 若 base 最后一段路径 ∉ `{v1, v1beta, v1alpha}` → 追加 `/v1beta`。
 4. 结果 `{base}/models/{encoded}:generateContent`。
+
+规则 1 的优先级高于"model 不得为空"：base 已经是完整端点时根本不需要拼 model 段，先报空模型错误等于拒掉一种合法配置。旧实现把空值检查放在前面，这里按本节编号纠正。"Gemini 必须给 model"这条要求由装配层（`prepare()`）承担，没有放松。
 
 请求体：
 ```json
@@ -304,6 +307,8 @@ r.setImageCountLimit(1);          // 拦 GIF/TIFF 多帧放大
 解码仅用于取尺寸与校验"确实是图片"，结果图字节原样落盘，不做重编码。
 
 **落点说明（2026-09-27）**：store 侧需要的只是尺寸与"是不是图"，而 `QImageReader` 会把 Qt6Gui 拖进 `image-client-mcp.exe`，抵销 §11.2 那半边的小体积。因此 `store/imageprobe.cpp` 直接解析容器头（PNG/JPEG/GIF/BMP/WebP 三种 chunk），§6.4 的开关在真正解像素的地方（GUI 显示与预览）仍然必须设置 —— 那部分随 GUI 任务落地。
+**入库前必须过探针**：`normalizeReferences()`（图生图参考图）与 §7.1 的结果落盘都要求 `recognized == true`，否则"是合法 base64"会被误当成"是图片"。
+
 探针的正确性不是自证：PNG/JPEG/BMP 用 `QImageWriter` 现场编码、再用 Qt 自己的解码器读回尺寸做对照（**同一批字节两个实现互相印证**），GIF/WebP 因本机无 WebP 解码器只能手工构造字节，文档如实记为"仅算术被覆盖"。测试刻意用非正方形尺寸（如 512x17），宽高互换才会失败。
 
 ### 6.5 本机 Qt 缺 WebP 支持 `[待拍板]`
@@ -331,9 +336,18 @@ r.setImageCountLimit(1);          // 拦 GIF/TIFF 多帧放大
 
 累计字节超 `MAX_GENERATED_MEDIA_BYTES` → 立即报错，不截断返回。条目数超 `MAX_UPSTREAM_MEDIA_ITEMS` → 截断采纳。
 
+落地记录（`protocol/parsers.cpp::parseImageResponse`）：
+
+- 「截断采纳」与「立即报错」是两件不同的事，实现分别为 `maxItems`（取前 N 条，成功返回）与 `totalBytes`（清空已收集图片、整体失败）。攒够一半就返回会被界面当成出图成功，这条用 `totalSizeCapAbortsTheWholeResult` 钉住。
+- `url` / `result` 两条分支各自都要覆盖"下载成功→转 data URL"和"下载失败→保留原链接"两种结局（冻结的旧行为）。只测一条会让人以为另一条也成立。
+- 取数走 `MediaFetcher` 注入点，与传输层解耦；`MediaLimits` 同理 —— 三条上限默认就是 §3 的冻结值，参数化只为让小用例能触发累计上限，不必造 100 MB 的 fixture。
+- 诊断结构固定为 `{message, client_request_id, endpoint, raw}` 的紧凑 JSON：旧实现抛的就是这个形状，用户与 MCP 错误面都在读它。`raw` 一律过 `compactRawResponse`（>64 KiB 时丢 `data`/`b64_json`/`result` 与任何 >4 KiB 的值，并置 `_omitted_large_fields`）。
+
 ### 7.2 Gemini
 
 遍历 `candidates[].content.parts[]`，取 `inlineData`（**兼容 `inline_data` 拼写**）且 `mimeType` 以 `image/` 开头者，有界解码 → data URL。零张图片时的错误消息固定为 `"Gemini 返回中没有可用的图片，可能被安全策略拦截或模型不支持生图"`，并附红acted 原始响应：必须把 `inlineData.data` 的值替换成 `"<omitted>"` 再进诊断，否则 32 MB 图像会进错误日志。
+
+落地记录：脱敏要按"父键 ∈ {inlineData, inline_data} 且键名 = data"判定，所以递归必须携带父键 —— 不判断父键会把 `candidates[].finishReason` 之类无关字段一起吞掉，也漏掉别的同名 `data`。`mimeType` / `mime_type`、`inlineData` / `inline_data` 两种拼写都要收（实测响应里都有）。非 `image/` 的 inlineData 跳过而不报错，因为安全拦截场景下正文里确实只有文字 part。
 
 ### 7.3 base64 解码规则 `[冻结]` `responses.py:80-100`
 
@@ -503,9 +517,9 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 #### 12.1.1 已移植（2026-09-27）
 
-覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`。
+覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 248 条用例全绿 / 10 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 41 · credentials 21），MSVC `/W4` 无告警。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 341 条用例全绿 / 12 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 41 · protocol 69 · parsers 24 · credentials 21），MSVC `/W4` 无告警。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -528,6 +542,7 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 
 6. **三件套里 Host 那件**：端点收到的请求行必须是 `host: pin.example.test:<port>` 而不是 IP —— 这条正是失败注入 #2 钉住的性质。
 - **失败注入 #3（2026-09-27，ACL 兜底）**：把 `evaluateGrants` 里「读不到任何授权条目也算失败」这半个条件去掉，`tst_assets` 恰好红 1 条（`aclPolicy(no grants)`）、其余 40 条不动。Windows 上空 DACL 的含义是**对所有账户开放**而不是「无权限」，所以这条兜底必须有用例钉住 —— 实现里太容易写成只判 `offenders.isEmpty()` 就放行。已还原复验 10/10 全绿。
+- **失败注入 #4/#5/#6（2026-09-27，协议层与解析层）**：#4 把 `openAiEditFileField` 强制成 `image` —— `tst_protocol` 红 7 条（6 个字段名用例 + 那条逐字节比较的 multipart 用例），其余 62 条不动，红的正是旧 CLI 静默走错分支的那批拼写（大写、带空白、2.5 变体）。#5 关掉 Gemini 诊断脱敏 —— 恰好红 1 条（`geminiEmptyResultUsesFrozenMessage`）。#6 让超总量时返回半份图集 —— 恰好红 1 条（`totalSizeCapAbortsTheWholeResult`）。三次注入都已还原并复验 12 个二进制全绿。
 7. **调用方不能伪造 Host**：`Request::headers` 里塞 `Host: evil.example.net` 必须被传输层覆盖，否则固定地址形同虚设（还能被用来做请求走私）。
 8. **凭据不跨源**：302 到另一 authority 时第二个请求不得带 `Authorization`，且降级为 `GET` 并丢掉 `Content-Type`/`Content-Length`；同源 307 反过来必须保留方法、body 和凭据。链接重定向超过 `kMaxRedirects` 必须拒且实际发出的请求数恰好等于上限+1。
 9. **拒绝在拨号之前**：字面量 `127.0.0.1` URL、解析到 loopback 的未信任域名、URL 内含用户名/密码三种情形，都必须在假端点的请求计数上留下 0 —— 断言"没连出去"而不是"报错了"，否则先连后拦的实现也能骗过测试。
