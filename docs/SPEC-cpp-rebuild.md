@@ -358,6 +358,9 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 - 地址排序：IPv4 优先，再按压缩字符串序 —— 保证行为确定。
 - **DNS 重绑定防护**：解析一次并固定，实际连接使用该 IP，同时保持 TLS SNI 与证书主机名校验不变（旧 `PinnedDNSHTTPAdapter`）。旧文档记为"TOCTOU 已修复"，新实现必须等价，不得退化为"校验后再解析一次"。
 - 重定向：手动跟随，≤3 跳，**每一跳重新执行上述全部校验**；跨源的跳转为 `GET` 且**不回传 Authorization**；若需回传凭据（如中转视频，已随范围移除）必须显式授权。
+- **Qt 侧实现方式（2026-09-27 实测接口，勿再凭印象）**：`QAbstractSocket::setPeerAddress` 在 6.8.3 中是 **protected**（`qabstractsocket.h` 的 `protected:` 段自 200 行起，该函数在 211 行），应用代码取不到；`QNetworkRequest` 也没有对等的地址接口。公开可用的钩子是 **`QNetworkRequest::setPeerVerifyName()`**（`qnetworkrequest.h` 约 167 行），它使证书按原始主机名校验而与实连地址无关。因此落地形态是「把 URL 主机段写成已固定的 IP 字面量 + `setPeerVerifyName(原主机名)`」。
+  `[待实测]` 该形态下 `Host:` 头是否仍是原始主机名 —— QNAM 默认按 URL 生成，会退化成 IP，而虚拟主机与 CDN 靠 Host 路由。必须用本地监听端点跑一次确认，必要时显式 `setRawHeader("Host", …)` 并验证不被覆盖。
+- **IPv4 判定不能只靠 `QHostAddress::isGlobal()`**：实测它把 **172.16/12 与 100.64/10 视为 global**（组播 `224/4` 也不在其 IPv4 判定内）。`urlpolicy.cpp` 因此自带保留段表；IPv6 侧仍依赖 Qt 谓词加 ULA，文档段与 Teredo 未枚举 —— 这是已知缺口而非取舍。
 - 所有上游响应体经 §7.4 有界读取。
 
 ---
@@ -447,9 +450,11 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 | `tests/test_mcp_stdio.py` | 236 | stdio 帧、协议握手 | 待 MCP 实现 |
 | `tests/test_mcp_http*.py`、`_tenancy.py` | ~1400 | 多租户/HTTP 控制面 | **不移植**（范围外） |
 
-#### 12.1.1 已移植（2026-09-27，`tests/tst_endpoints.cpp` + `tests/tst_models.cpp`）
+#### 12.1.1 已移植（2026-09-27）
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 62 条断言全绿**（tst_models 47 / tst_endpoints 15），MSVC `/W4` 无告警。
+覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`。
+
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 141 条断言全绿**（endpoints 15 / models 47 / urlpolicy 45 / decode 10 / retrypolicy 24），MSVC `/W4` 无告警。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -457,7 +462,7 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 - 模型名大小写/空白归一：`GPT-Image-2`、`gpt-image-2.5-flare`、`GPT-Image-2.5-Flare` 必须为真；`gpt-image-25`（无分隔符）、`gpt-image-3`、`dall-e-3` 必须为假。
 - `is_grok_image_model`：`GROK-IMAGINE`、`grok-imagine-image-pro` 为真；缺连字符的 `grok-imagine-imagequality` 与 `grok-imagine-x` 为假。
 - Grok 尺寸推导表（1:1 / 16:9 / 9:16 / 兜底），以及"推导结果恒在支持集内且恒不为 `auto`"的 7×7 网格。
-- `decode_base64_limited`、有界读取、UTF-8 解码、重试分类 **未移植** —— 它们属于 §7.4/§8.3，随任务 #3 的 `core/net` 一起落地。
+- 严格 base64（§7.3）与重试分类（§4）已移植（`decode.cpp` / `retrypolicy.cpp`）。**仍未移植**：有界响应体读取与 UTF-8 诊断解码（§7.4），它们需要一个可注入分块的传输层才能测，随 `core/net` 的 QNAM 封装一起落地。
 
 新增覆盖（旧测试没有，属主动补强）：
 
@@ -469,8 +474,8 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 
 #### 12.1.2 失败路径验证状态
 
-- **已验证**：测试二进制在失败时以非零退出码上报（实测未知函数名调用 → exit 1），这正是 ctest 判定 Failed 的机制。所以"绿"不是靠人眼看输出得来的。
-- **未验证**：断言本身退化时是否会报红。曾尝试临时改错一条期望值，被权限层拦下（合理：该操作与引入真实 bug 无法区分）。**下一个改 `core/` 的任务应顺带做一次失败注入 —— 改实现而非改期望值**，例如临时把 `grokResolutionFromSize` 的 `> 1536` 写成 `>= 1536`，确认 `threshold below` 那行转红后再改回。
+- **退出码机制已验证**：测试二进制在失败条件下返回非零（实测未知函数名调用 → exit 1），ctest 据此判 Failed，所以"绿"不是人眼看输出得出的。
+- **失败注入已验证（2026-09-27）**：把 `retrypolicy.cpp` 的 `status >= 500` 临时改成 `>= 600`（**改实现，不改期望**），`tst_retrypolicy` 随即报红而其余四个测试保持通过，确认断言真的在约束行为而非装饰；随后已改回并复验全绿。当初"改期望值"的做法被权限层正确拦下——那与引入真实 bug 无法区分，改实现才是对的注入点。
 
 关键必测用例（对应真实故障）：`GPT-Image-2` 大写必须走 `image[]` 分支；`background=transparent` + `gpt-image-2` 必须 4xx 本地拒绝；HTML 错误页伪装的 base64 必须报错而非产出垃圾图；中文上游错误消息不得乱码；400 不得重发 multipart 到第二候选；非 global 解析地址必须拒绝；重定向到 127.0.0.1 必须逐跳拒绝。
 

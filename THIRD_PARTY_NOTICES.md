@@ -43,12 +43,31 @@ and <https://doc.qt.io/qt-6/licenses.html>.
   point release.
 - **No additional restrictions.** Nothing in `LICENSE` restricts modification or
   replacement of the Qt libraries.
-- **Build-time tools.** `moc`, `rcc` and `qmlcachegen` are used at build time.
-  <!-- VERIFY BEFORE FIRST PUBLIC RELEASE: Qt states generated code from moc/rcc/
-       uic is unrestricted. Equivalent wording for qmlcachegen output was not
-       located while this file was written, so confirm it (or drop AOT QML
-       compilation, which is a one-line CMake change) before relying on this
-       bullet. -->
+- **Build-time tools.** `moc`, `rcc` and `qmlcachegen` run at build time;
+  `qmlcachegen` compiles our `.qml` files into C++ that is then compiled into
+  `ImageClient.exe`.
+  We looked for, and could not find, any statement in the current Qt
+  documentation granting or restricting rights over tool output: neither the
+  Qt 6 nor the Qt 5 `rcc` page, nor the Qt licensing page, contains wording
+  about generated code. The widely repeated claim that Qt "grants you the
+  generated code" is not documented in those places. What we could establish
+  directly:
+  - the generated file carries no license header at all; it opens with a
+    resource-path comment, then public Qt includes, then
+    `namespace QmlCacheGeneratedCode`
+  - for our 110-line `Main.qml` the output is 49,696 bytes, of which roughly
+    1,104 lines are an `extern const unsigned char qmlData[]` byte array, i.e. a
+    serialization of **our own** QML; the remainder is glue that calls public Qt
+    headers. No Qt implementation source is copied into it.
+  The obligations we owe under LGPLv3 attach to the Library, and are met
+  independently of this: Qt stays LGPL, its source remains obtainable, and
+  users may replace or relink the shared DLLs. Nothing here restricts the
+  generated output more tightly than the library terms already do, and
+  Apache-2.0 is compatible with LGPLv3.
+  If this reasoning is ever unsatisfying, the question can be removed outright:
+  `qt_add_qml_module(... NO_CACHEGEN)`, the global `QT_QML_NO_CACHEGEN`, or
+  `QT_QMLCACHEGEN_ARGUMENTS "--only-bytecode"` each stop Qt's compiler from
+  emitting C++ that we compile into the binary.
 - **TLS.** HTTPS is provided by the Qt TLS backend `qschannelbackend.dll`, which
   delegates to the Windows Secure Channel API already present in the operating
   system. No OpenSSL build is shipped or linked.

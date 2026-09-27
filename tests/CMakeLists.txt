@@ -13,3 +13,6 @@ endfunction()
 
 oic_add_test(tst_endpoints tst_endpoints.cpp)
 oic_add_test(tst_models tst_models.cpp)
+oic_add_test(tst_urlpolicy tst_urlpolicy.cpp)
+oic_add_test(tst_decode tst_decode.cpp)
+oic_add_test(tst_retrypolicy tst_retrypolicy.cpp)
