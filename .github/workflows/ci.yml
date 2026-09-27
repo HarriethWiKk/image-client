@@ -27,21 +27,23 @@ jobs:
           arch: ${{ env.QT_ARCH }}
           cache: true
 
-      # install-qt-action's output names have moved between major versions, so
-      # rather than couple the build to them the prefix is recovered from the
-      # qmake.exe it leaves behind. Fails loudly if no MSVC build was produced.
-      - name: Resolve Qt prefix
+      # install-qt-action publishes the prefix as QT_ROOT_DIR. Its default
+      # install location is under GITHUB_WORKSPACE, not RUNNER_TEMP, which is
+      # what the first run of this workflow got wrong.
+      - name: Check Qt root
         shell: pwsh
         run: |
-          $qmake = Get-ChildItem -Path $env:RUNNER_TEMP -Filter qmake.exe `
-            -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $qmake) {
-            Write-Host "::error::No qmake.exe under $env:RUNNER_TEMP - Qt install did not produce an MSVC build"
+          if (-not $env:QT_ROOT_DIR) {
+            Write-Host "::error::QT_ROOT_DIR is not set - the Qt install step did not export it"
             exit 1
           }
-          $prefix = $qmake.Directory.Parent.FullName
-          Write-Host "Qt prefix: $prefix"
-          "QTDIR=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $qmake = Join-Path $env:QT_ROOT_DIR 'bin\qmake.exe'
+          if (-not (Test-Path $qmake)) {
+            Write-Host "::error::$env:QT_ROOT_DIR has no bin\qmake.exe - is arch win64_msvc2022_64 installed?"
+            exit 1
+          }
+          Write-Host "Qt prefix: $env:QT_ROOT_DIR"
+          "QTDIR=$env:QT_ROOT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build
         shell: cmd
