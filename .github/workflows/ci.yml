@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    env:
+      QT_VERSION: '6.8.3'
+      QT_ARCH: 'win64_msvc2022_64'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ env.QT_ARCH }}
+          cache: true
+
+      # install-qt-action's output names have moved between major versions, so
+      # rather than couple the build to them the prefix is recovered from the
+      # qmake.exe it leaves behind. Fails loudly if no MSVC build was produced.
+      - name: Resolve Qt prefix
+        shell: pwsh
+        run: |
+          $qmake = Get-ChildItem -Path $env:RUNNER_TEMP -Filter qmake.exe `
+            -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $qmake) {
+            Write-Host "::error::No qmake.exe under $env:RUNNER_TEMP - Qt install did not produce an MSVC build"
+            exit 1
+          }
+          $prefix = $qmake.Directory.Parent.FullName
+          Write-Host "Qt prefix: $prefix"
+          "QTDIR=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build
+        shell: cmd
+        run: scripts\build.cmd
+
+      - name: Test
+        shell: cmd
+        run: |
+          set "PATH=%QTDIR%\bin;%PATH%"
+          ctest --test-dir build --output-on-failure
+
+      # Reproduces the 43.3 MB / 137 file baseline recorded in docs/SPEC-cpp-rebuild.md
+      # §11.1 with the same flags, so packaging changes show up as a size delta in
+      # the job summary instead of as a surprise at release time.
+      - name: Package and measure bundle
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:QTDIR\bin;$env:PATH"
+          $stage = Join-Path $env:RUNNER_TEMP 'bundle'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item build\ImageClient.exe, build\image-client-mcp.exe $stage
+
+          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations --no-opengl-sw `
+            --qmldir src\gui\qml (Join-Path $stage 'ImageClient.exe')
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::windeployqt failed"; exit 1 }
+
+          $items = Get-ChildItem -Path $stage -Recurse -File
+          $bytes = ($items | Measure-Object -Property Length -Sum).Sum
+          $top = $items | Sort-Object Length -Descending | Select-Object -First 8
+
+          $summary = @()
+          $summary += "### Bundle size"
+          $summary += ""
+          $summary += "| | |"
+          $summary += "|---|---|"
+          $summary += "| deployed | {0:N1} MB |" -f ($bytes / 1MB)
+          $summary += "| files | $($items.Count) |"
+          $summary += ""
+          $summary += "Largest files:"
+          $summary += ""
+          $summary += "| size | file |"
+          $summary += "|---:|---|"
+          foreach ($item in $top) {
+            $rel = $item.FullName.Substring($stage.Length + 1)
+            $summary += "| {0:N2} MB | ``$rel`` |" -f ($item.Length / 1MB)
+          }
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+          if ($bytes -gt 60MB) {
+            Write-Host "::error::bundle grew past 60 MB ($([math]::Round($bytes / 1MB, 1)) MB) - investigate before widening this bound"
+            exit 1
+          }
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-client-windows-x64
+          path: ${{ runner.temp }}\bundle
+          if-no-files-found: error

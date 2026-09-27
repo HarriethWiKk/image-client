@@ -423,6 +423,8 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 三项全去掉约 **36–37 MB 部署 / 15 MB 压缩**。
 
+`.github/workflows/ci.yml` 的 "Package and measure bundle" 步骤用同一组 windeployqt 参数在 CI 上重算这两个数，写进 job summary，并在超过 **60 MB** 时让作业失败。所以上面三项裁剪落地时，这里应当观察到下降而不是上升；若观察到上升，说明部署目录混进了多余东西（最常见的来源是 debug 版 DLL 或 qmltooling）。
+
 ### 11.2 双二进制的体积红利（实测确认）
 
 扫导入表：`image-client-mcp.exe` **只引用 `Qt6Core.dll`**，GUI 版引用 Core/Gui/Qml/QuickControls2（Quick 经 QML 插件运行时加载）。即 §2.1 的拆分让 MCP 服务端只需约 6 MB 运行时，而完整 GUI 是 43 MB —— 给只想在 agent 里用出图能力的用户，可以只发 MCP 那半。
