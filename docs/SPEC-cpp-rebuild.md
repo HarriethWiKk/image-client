@@ -592,6 +592,8 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 1. **安装包形态**（2026-09-27 细化）：要 setup 式安装是定了，**格式没定**，因为两件事被混在一起谈过：
    - **签名证书是独立的一轴**，与选哪种格式无关。Inno Setup / NSIS / MSI 不签名也能装，只是下载后首次运行会撞 SmartScreen「未知发布者」提示（点"仍要运行"即可）；MSIX 不签名则**装不上**，必须开开发者模式或让目标机器信任一张自签证书。
    - **MSIX 对本项目还有第二重代价**：App Container 会把 `%LOCALAPPDATA%` 虚拟化成包内目录（repair/卸载即清空，历史库和 asset 目录都在里面），并且包外文件系统只读 —— 用户想把图存到"下载"目录需要 `broadFileSystemAccess` 之类的可选能力。§6.1 的存储设计和 MSIX 沙箱是相互打架的。
+   - **MSIX 已排除**（2026-09-27）：本软件要分发给别人用，而 MSIX 未签名装不上、签名要花钱，还要背上上面那条沙箱冲突。
+   - **Inno Setup vs WiX 的分岔点只有一个**：是否需要**企业批量部署**（GPO / SCCM / Intune 派发 .msi）或 **.msp 增量补丁**。不需要 → Inno Setup：per-user 安装免管理员、单 setup.exe 双击即装、脚本短、CI 里一个 `ISCC.exe` 步骤就够。需要 → WiX（.msi 是 IT 部门的通用货币），代价是 XML 编写量与 MSI 调试（verbose log）会摊到每次改打包的日常里。两者产物内容完全相同（§11 的部署目录），换格式不动应用代码，所以这不是一个不可逆决定。
    - 零成本候选：**Inno Setup**（推荐，单 setup.exe、支持 per-user 安装免管理员、卸载器齐全）、NSIS、WiX（出 MSI，企业分发友好但 XML 更重）。三者都免费且开源。开源 + Windows 下这是一整个子系统；不做就现在明确不做，别留白。
 3. **历史保留默认值**：500 行 / 2 GiB 是我提的起点，需确认。
 4. **上游协议演进策略**：新模型、新枚举、`gpt-image-2.5-*` 之后的下一代怎么跟进（跟随 provider 文档 / 固定季度 / profile 里允许 override），否则 §5.2 会腐烂。
