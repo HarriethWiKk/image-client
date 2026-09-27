@@ -8,6 +8,7 @@ qt_add_library(oic-core STATIC
     oic/net/transport.h
     oic/store/imageprobe.h
     oic/store/paths.h
+    oic/store/assets.h
     oic/store/database.h
     oic/secret/credentials.h
     models.cpp
@@ -18,6 +19,7 @@ qt_add_library(oic-core STATIC
     net/transport.cpp
     store/imageprobe.cpp
     store/paths.cpp
+    store/assets.cpp
     store/database.cpp
     secret/credentials.cpp
 )

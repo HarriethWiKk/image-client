@@ -236,7 +236,15 @@ size : 自由形式 "WxH"，仅做长度 ≤64 校验，不校验白名单（三
 
 新实现：`%LOCALAPPDATA%\image-client\assets\<job-id>\`，依赖 `%LOCALAPPDATA%` 默认 ACL（仅当前用户 + SYSTEM）；仍需显式校验并记录实际 ACL。**同时修复旧仓的"无跨进程锁"缺陷**：asset 目录创建与配额扣减必须在同一把命名互斥量下完成，允许 GUI 与 MCP 两个进程共存。
 
-### 6.2 sqlite schema 草案 `[设计提案，非冻结]`
+**落地记录（2026-09-27，`store/paths.cpp` + `store/assets.cpp`）**：
+
+- `resolvePaths()` 在 `LOCALAPPDATA` 缺失或不是绝对路径时**返回错误而不是退回别处** —— 退到 temp 或 profile 根正是本节禁止的事。测试用清空环境变量的方式覆盖了这条分支。
+- 配额扣减与建目录在同一个 `CreateMutexW` 名下完成；`WaitForSingleObject` 把 **`WAIT_ABANDONED_0` 视为获取成功**（前一个持有者崩了），这是选互斥量而不是锁文件的理由。跨线程争用实测：另一线程持锁 1.2 s、本线程 150 ms 预算 → 报超时且**一个字节都没落盘**。
+- **ACL 实测结果修正了本节原先的假设**：本机 `%LOCALAPPDATA%` 之下新建目录的 DACL 除当前用户 / `S-1-5-18`（SYSTEM）/ `S-1-5-32-544`（Administrators）之外，还带 **`S-1-15-3-*` 应用容器 capability SID**。这类是沙箱句柄，不是"别的本地用户能读"的路径，因此策略把它们归入 `notes` 而非 `offenders`；其余任何无法识别的授权一律判失败（读不懂就当作有问题，不许蒙过去）。NULL DACL 单独判失败并在消息里说明"等于对所有账户开放"——空 DACL 不是"无权限"而是"全开放"。
+- 配额拒绝发生在**建目录之前**；短写会删掉半成品（截断的图片和完整图片在文件系统上看起来一样）。
+- `relPath` 删除路径先 `cleanPath` 再比较**两侧 canonical 形式**，防目录树里的重解析点把删除指向树外。
+
+### 6.2 sqlite schema `[已实现，user_version = 1]`
 
 新能力——旧仓重启即失忆（`MAX_JOBS=64` 静默淘汰、无分页），本条是本次重建最主要的功能增量。
 
@@ -257,18 +265,33 @@ CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 ```
 历史 UI 以 `jobs` 为唯一数据源，`pinned` 与软删除提供旧仓完全没有的保留控制。保留上限（默认建议 500 行 + 2 GiB 配额）作为设置项。
 
+实现要点（与草案的差别都在这里）：
+
+- 连接按线程命名（`oic-store-<threadId>`），开 `journal_mode=WAL` + `busy_timeout=5000` + `foreign_keys=ON`。GUI 与 MCP 是两个进程共享一个文件，回滚日志模式会让第二个写者整段事务被挡；两线程各写 25 行实测互不阻塞。
+- `user_version` 高于本版本支持值时**拒绝打开**，不做降级迁移。
+- 保留语义（`pruneToLimits`）：行预算只统计 **live 且未 pinned** 的任务，pinned 落在预算之外；软删除的行无论预算多少都被清除；字节预算按 `created_at` 从旧到新丢弃非 pinned 任务的资产，pinned 的资产即使在预算之外也不动。
+- **踩过的坑，必须留在文档里**：默认构造的 `QString` 是 **null**（实测 `QString().isNull()` 为真，`QStringLiteral("").isNull()` 为假），`QSqlQuery` 把 null 绑成 SQL NULL，于是 `NOT NULL` 文本列直接拒绝插入。绑定边界统一走 `text()` 归一化为空串，"没填"在这些列上的含义就是空字符串。
+- `assets.job_id` 是 `ON DELETE CASCADE`，删任务不留孤儿文件记录；插入指向不存在任务的资产会被外键挡下（测试覆盖）。
+
 ### 6.3 凭据
 
 **[冻结] 唯一存储位置 = Windows Credential Manager。** 不再有 `secrets.json`，不再有 `chmod 600`（该调用在 NT 上只影响只读位，旧仓 `web_app.py:207` 自己注释了"尽力而为"）。
 
 ```
-CredType  = CRED_TYPE_DOMAIN_GENERIC_PASSWORD
+CredType  = CRED_TYPE_GENERIC            （SDK 里不存在 CRED_TYPE_DOMAIN_GENERIC_PASSWORD 这个名字；
+                                           wincred.h:442 定义的是 CRED_TYPE_GENERIC = 1）
 TargetName = "image-client/profile/<profile-name>"
 CredentialBlob = UTF-8 密钥原文（无 BOM，无换行）
+Persist = CRED_PERSIST_LOCAL_MACHINE     UserName = "image-client"
 ```
 - profile 的 `credential_target` 存 TargetName；密钥永不写入 sqlite、日志、请求 URL。
 - 不做文件回退。**回退等于把刚消掉的明文问题请回来。**
 - 上游请求头：OpenAI/Grok 用 `Authorization: Bearer <key>`，Gemini 用 `x-goog-api-key`。
+- **容量上限（实测/引头文件）**：`CRED_MAX_CREDENTIAL_BLOB_SIZE = 5*512 = 2560` 字节（`wincred.h:455`），而 §3 的 `kMaxApiKeyChars = 8192`。两者不一致，因此保存时按 2560 拒绝并说明原因，**不做截断保存**；被拒的写入不留半条凭据（测试覆盖）。真实厂商密钥在 300 字符内，这是一条边角约束而不是阻塞项。
+- profile 名进入全局凭据命名空间，因此字符集收紧为 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`，顺带使"名字里嵌前缀"这种自我覆盖不可能发生。
+- 删除按幂等处理（不存在=成功）；读取区分"没有这条凭据"和"读失败"。
+- 测试对着**真实**凭据管理器跑（mock 掉就等于没验证 §6.3）；环境拒绝写入时整类 QSKIP 而不是判失败，用例结束逐条删除，实测 `cmdkey /list` 无残留。
+- "密钥不落盘"是可测的：写入哨兵密钥后扫描 `%LOCALAPPDATA%` 与临时目录下的每个文件，断言不含该字节串，同时断言 `credential_target` 确实在数据库里（否则这条断言是空的）。
 
 ### 6.4 图像解码的强制安全开关 `[冻结]`
 
@@ -279,6 +302,17 @@ r.setAllocationLimit(0);          // 0 = 默认 2 GiB 上限；禁止设为 SIZE
 r.setImageCountLimit(1);          // 拦 GIF/TIFF 多帧放大
 ```
 解码仅用于取尺寸与校验"确实是图片"，结果图字节原样落盘，不做重编码。
+
+**落点说明（2026-09-27）**：store 侧需要的只是尺寸与"是不是图"，而 `QImageReader` 会把 Qt6Gui 拖进 `image-client-mcp.exe`，抵销 §11.2 那半边的小体积。因此 `store/imageprobe.cpp` 直接解析容器头（PNG/JPEG/GIF/BMP/WebP 三种 chunk），§6.4 的开关在真正解像素的地方（GUI 显示与预览）仍然必须设置 —— 那部分随 GUI 任务落地。
+探针的正确性不是自证：PNG/JPEG/BMP 用 `QImageWriter` 现场编码、再用 Qt 自己的解码器读回尺寸做对照（**同一批字节两个实现互相印证**），GIF/WebP 因本机无 WebP 解码器只能手工构造字节，文档如实记为"仅算术被覆盖"。测试刻意用非正方形尺寸（如 512x17），宽高互换才会失败。
+
+### 6.5 本机 Qt 缺 WebP 支持 `[待拍板]`
+
+实测：整个 `D:\tools\Qt\6.8.3\msvc2022_64` 下**没有任何 WebP 相关插件**（`plugins/imageformats` 只有 gif / ico / jpeg / svg）。后果：
+- §11 部署清单里列的 `imageformats/qwebp.dll` 在本机不存在，那一行按现状是错的（§11 已按实测改为 gif/ico/jpeg/svg 四对）。
+- 三家 provider 的 `output_format` 都允许 `webp`（§5.5 是"非空即透传"），选了就存回文件但 **GUI 显示不出来**。
+
+可选路径：(a) `output_format` 白名单收到 png/jpeg（改动最小，代价是少一种格式）；(b) 自行编译 libwebp + Qt 的 qwebp 插件并随包分发（体积 +约 0.3 MB，代价是引入一个自建依赖，LGPL 义务见 §11.1）；(c) 允许写 webp 但界面明示无法预览。当前实现不替用户决定：探针识别 webp，落盘扩展名照给。
 
 ---
 
@@ -410,7 +444,7 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 ## 11. 打包与体积预算
 
-部署时按需裁剪：`platforms/qwindows.dll`、`imageformats/{qjpeg,qwebp,qsvg}.dll`、`tls/` 后端、`qml/QtQuick*` 与 `QtQuick/Controls/Basic`。
+部署时按需裁剪：`platforms/qwindows.dll`、`imageformats/{qjpeg,qgif,qico,qsvg}.dll`、`tls/` 后端、`qml/QtQuick*` 与 `QtQuick/Controls/Basic`。
 
 ### 11.1 实测体积（2026-09-27，占位 GUI 壳 + windeployqt，Release）
 
@@ -445,6 +479,8 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 `oic-core` 已经把 `Qt6::Network` 设为 PUBLIC 依赖（`urlpolicy`/`transport` 需要），但 MCP 侧当前没有任何代码引用 Network 里的符号，静态库的未引用目标文件不参与链接，其对应的 DLL 导入项因此**没有出现在最终 exe 里**。这条有代价边界：**一旦 MCP 调用 `net::Transport`，`Qt6Network.dll` 就成了 MCP 那半的硬依赖**（+1.7 MB，见 §11.1 地板表）。这是可预期的，不是回归。
 
+复测于任务 #4 之后（2026-09-27）：`oic-core` 又增了 `Qt6::Sql` 与 `advapi32` 两个 PUBLIC 依赖，MCP 侧 exe 的导入表**仍然只有 `Qt6Core.dll`** —— 因为 MCP 的 main 目前没调用 store/secret 的任何符号。同一机制，同一结论：GUI 侧引用 Qt6Sql/advapi32 后 GUI exe 会新增这两个导入项。
+
 即 §2.1 的拆分让 MCP 服务端只需约 6 MB 运行时，而完整 GUI 是 43 MB —— 给只想在 agent 里用出图能力的用户，可以只发 MCP 那半。
 
 UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，且常触发杀毒软件启发式告警"。**建议不开。**
@@ -467,9 +503,9 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 #### 12.1.1 已移植（2026-09-27）
 
-覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`。
+覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 156 条用例全绿**（endpoints 15 / models 47 / urlpolicy 45 / decode 10 / retrypolicy 24 / transport 15），MSVC `/W4` 无告警。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 248 条用例全绿 / 10 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 14 · assets 41 · credentials 21），MSVC `/W4` 无告警。
 
 覆盖 §4 与 §5.2 的原有断言：
 
@@ -491,6 +527,7 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 传输层（`tst_transport.cpp`，15 例）对着 127.0.0.1 上的假端点跑**真实** `Transport::send()`，只把 DNS 换成注入点，因此 §8.3 的固定与逐跳校验走的是生产同一条代码路径：
 
 6. **三件套里 Host 那件**：端点收到的请求行必须是 `host: pin.example.test:<port>` 而不是 IP —— 这条正是失败注入 #2 钉住的性质。
+- **失败注入 #3（2026-09-27，ACL 兜底）**：把 `evaluateGrants` 里「读不到任何授权条目也算失败」这半个条件去掉，`tst_assets` 恰好红 1 条（`aclPolicy(no grants)`）、其余 40 条不动。Windows 上空 DACL 的含义是**对所有账户开放**而不是「无权限」，所以这条兜底必须有用例钉住 —— 实现里太容易写成只判 `offenders.isEmpty()` 就放行。已还原复验 10/10 全绿。
 7. **调用方不能伪造 Host**：`Request::headers` 里塞 `Host: evil.example.net` 必须被传输层覆盖，否则固定地址形同虚设（还能被用来做请求走私）。
 8. **凭据不跨源**：302 到另一 authority 时第二个请求不得带 `Authorization`，且降级为 `GET` 并丢掉 `Content-Type`/`Content-Length`；同源 307 反过来必须保留方法、body 和凭据。链接重定向超过 `kMaxRedirects` 必须拒且实际发出的请求数恰好等于上限+1。
 9. **拒绝在拨号之前**：字面量 `127.0.0.1` URL、解析到 loopback 的未信任域名、URL 内含用户名/密码三种情形，都必须在假端点的请求计数上留下 0 —— 断言"没连出去"而不是"报错了"，否则先连后拦的实现也能骗过测试。
@@ -530,4 +567,5 @@ QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `
 2. **自动更新要不要**？开源 + Windows 下这是一整个子系统；不做就现在明确不做，别留白。
 3. **历史保留默认值**：500 行 / 2 GiB 是我提的起点，需确认。
 4. **上游协议演进策略**：新模型、新枚举、`gpt-image-2.5-*` 之后的下一代怎么跟进（跟随 provider 文档 / 固定季度 / profile 里允许 override），否则 §5.2 会腐烂。
-5. **Qt 版本**：锁 6.8.3 还是升到 6.11。倾向锁 6.8.3 直到主线完成 —— 已实测全链路可用，换版本要重跑体积与样式验证。
+5. **WebP 要不要支持**：本机 Qt 完全没有 WebP 插件（§6.5），三选一 —— 把 `output_format` 收到 png/jpeg、自行编译 qwebp 插件随包分发、或允许落盘但界面明示无法预览。当前实现不替你决定。
+6. **Qt 版本**：锁 6.8.3 还是升到 6.11。倾向锁 6.8.3 直到主线完成 —— 已实测全链路可用，换版本要重跑体积与样式验证。

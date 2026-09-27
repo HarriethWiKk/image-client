@@ -24,6 +24,7 @@ oic_add_test(tst_imageprobe tst_imageprobe.cpp)
 target_link_libraries(tst_imageprobe PRIVATE Qt6::Gui)
 
 oic_add_test(tst_store tst_store.cpp)
+oic_add_test(tst_assets tst_assets.cpp)
 
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
