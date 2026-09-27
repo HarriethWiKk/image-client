@@ -11,6 +11,9 @@ namespace oic::core {
 // video and variations were descoped (SPEC §1).
 enum class Route { Generations, Edits };
 
+// Path suffix for a route, as it appears after the base URL.
+QString routePath(Route route);
+
 QString normalizeBaseUrl(const QString &baseUrl);
 
 QString joinUrl(const QString &baseUrl, const QString &suffix);

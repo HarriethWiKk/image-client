@@ -3,6 +3,12 @@
 #include "oic/core/endpoints.h"
 
 namespace oic::core {
+
+QString routePath(Route route) {
+  return route == Route::Edits ? QLatin1String("images/edits")
+                                            : QLatin1String("images/generations");
+}
+
 namespace {
 
 // Order inherited from the reference list. It is not load-bearing today: a
@@ -17,10 +23,6 @@ const QStringList &knownApiEndpoints() {
       QLatin1String("/images/edits"),
   };
   return endpoints;
-}
-
-QString routeName(Route route) {
-  return route == Route::Edits ? QLatin1String("images/edits") : QLatin1String("images/generations");
 }
 
 QString trimTrailingSlashes(QString value) {
@@ -53,7 +55,7 @@ QStringList candidateEndpoints(const QString &baseUrl, Route route) {
   if (value.isEmpty()) {
     return {};
   }
-  const QString routeSegment = routeName(route);
+  const QString routeSegment = routePath(route);
 
   for (const QString &endpoint : knownApiEndpoints()) {
     if (!value.endsWith(endpoint)) {

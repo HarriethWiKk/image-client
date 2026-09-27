@@ -11,6 +11,7 @@ qt_add_library(oic-core STATIC
     oic/store/assets.h
     oic/store/database.h
     oic/secret/credentials.h
+    oic/protocol/imageprotocol.h
     models.cpp
     endpoints.cpp
     urlpolicy.cpp
@@ -22,6 +23,7 @@ qt_add_library(oic-core STATIC
     store/assets.cpp
     store/database.cpp
     secret/credentials.cpp
+    protocol/imageprotocol.cpp
 )
 
 target_include_directories(oic-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
