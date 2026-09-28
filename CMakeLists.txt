@@ -20,6 +20,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Netwo
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_subdirectory(src/core)
+add_subdirectory(src/app)
 add_subdirectory(src/gui)
 add_subdirectory(src/mcp)
 

@@ -8,6 +8,7 @@ qt_add_qml_module(ImageClient
 
 target_link_libraries(ImageClient PRIVATE
     oic-core
+    oic-app
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick

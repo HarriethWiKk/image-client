@@ -40,6 +40,13 @@ oic_add_test(tst_jobmanager tst_jobmanager.cpp)
 # jobs <-> real net::Transport over loopback: proves the seam does not bypass SSRF/pinning.
 oic_add_test(tst_jobs_integration tst_jobs_integration.cpp)
 
+# gui-side oic-app foundation (Backend + AssetImageProvider); links oic-app, which pulls
+# Qt Gui/Quick for QImage/QImageReader.
+qt_add_executable(tst_app tst_app.cpp)
+target_link_libraries(tst_app PRIVATE Qt6::Test oic-app)
+add_test(NAME tst_app COMMAND tst_app)
+set_tests_properties(tst_app PROPERTIES ENVIRONMENT "PATH=${OIC_QT_BIN_DIR};$ENV{PATH}")
+
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
     oic_add_test(tst_credentials tst_credentials.cpp)
