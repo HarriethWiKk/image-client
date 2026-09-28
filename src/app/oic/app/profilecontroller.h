@@ -19,6 +19,9 @@ class Backend;
 class ProfileController : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString currentProfile READ currentProfile WRITE setCurrentProfile NOTIFY currentProfileChanged)
+    // Field maps for every profile, kept in sync by `changed` -- so the settings Repeater
+    // binds to a property (single source of truth) instead of a method call that goes stale.
+    Q_PROPERTY(QVariantList profiles READ profilesList NOTIFY changed)
 public:
     explicit ProfileController(Backend *backend, QObject *parent = nullptr);
 

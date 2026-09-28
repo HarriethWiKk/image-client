@@ -18,17 +18,18 @@ Window {
     visible: true
     title: qsTr("image-client")
 
-    // Inline dark palette; extracted to a Theme singleton once History/Settings become
-    // their own files (GUI-E/F).
-    readonly property color bg: "#141414"
-    readonly property color surface: "#1e1e1e"
-    readonly property color surfaceAlt: "#282828"
-    readonly property color borderColor: "#3a3a3a"
-    readonly property color fg: "#e8e8e8"
-    readonly property color fgMuted: "#9a9a9a"
-    readonly property color accent: "#6aa9ff"
-    readonly property color accentFg: "#08182e"  // text drawn on an accent-filled surface
-    readonly property color danger: "#e0655f"
+    // Palette switches on Settings.themeName (persisted). Names are stable so all existing
+    // bindings keep working; a proper Theme singleton is a later refactor.
+    readonly property bool dark: Settings.themeName !== "light"
+    readonly property color bg: dark ? "#141414" : "#f4f4f6"
+    readonly property color surface: dark ? "#1e1e1e" : "#ffffff"
+    readonly property color surfaceAlt: dark ? "#282828" : "#e9e9ee"
+    readonly property color borderColor: dark ? "#3a3a3a" : "#d3d3da"
+    readonly property color fg: dark ? "#e8e8e8" : "#1a1a1a"
+    readonly property color fgMuted: dark ? "#9a9a9a" : "#66666e"
+    readonly property color accent: "#4a86d8"
+    readonly property color accentFg: "#ffffff"  // text drawn on an accent-filled surface
+    readonly property color danger: dark ? "#e0655f" : "#c23b34"
     readonly property real radius: 10
     readonly property real gap: 12
     readonly property real gapLg: 20
@@ -40,6 +41,13 @@ Window {
     property bool dropping: false   // true while a drag is over the reference card
     property string currentJobId: ""
     property string statusMessage: ""
+    property string editingName: ""   // profile being edited in the settings editor ("" = new)
+
+    function resetProfileEditor() {
+        editingName = ""
+        eName.text = ""; eName.enabled = true; eBase.text = ""; eModel.text = ""
+        eTimeout.value = 300; eKey.text = ""
+    }
 
     function relToUrl(rel) { return "image://asset/" + rel }
 
@@ -542,8 +550,178 @@ Window {
                     }
                 }
             }
-            Item {
-                Label { anchors.centerIn: parent; text: qsTr("设置视图 · 待 GUI-F"); color: root.fgMuted }
+            // ---------------- Settings (GUI-F) ----------------
+            ScrollView {
+                clip: true
+                ColumnLayout {
+                    width: Math.min(root.width - 140, 760)
+                    x: 24
+                    spacing: root.gapLg
+
+                    // ---- Profiles ----
+                    GroupBox {
+                        Layout.fillWidth: true
+                        label: Text { text: qsTr("Profile 管理（多服务商快速切换）"); color: root.fgMuted; font.pixelSize: 13 }
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 8
+
+                            Text { text: qsTr("已有 profile"); color: root.fgMuted; font.pixelSize: 12; visible: Profiles.profiles.length > 0 }
+                            Repeater {
+                                model: Profiles.profiles
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    property var p: modelData
+                                    Text {
+                                        text: p.name + " · " + p.protocol + (p.hasCredential ? qsTr(" · 有密钥") : qsTr(" · 无密钥"))
+                                        color: root.fg; elide: Text.ElideRight; Layout.fillWidth: true
+                                    }
+                                    Button {
+                                        text: qsTr("编辑")
+                                        onClicked: {
+                                            root.editingName = p.name
+                                            eName.text = p.name; eName.enabled = false
+                                            eBase.text = p.baseUrl; eProto.currentText = p.protocol
+                                            eModel.text = p.imageModel; eTimeout.value = p.timeoutSeconds; eKey.text = ""
+                                        }
+                                    }
+                                    Button { text: qsTr("设密钥"); onClicked: { root.editingName = p.name; eName.text = p.name; eName.enabled = false; eKey.focus = true } }
+                                    Button { text: qsTr("删除密钥"); visible: p.hasCredential; onClicked: Profiles.deleteCredential(p.name) }
+                                    Button {
+                                        text: qsTr("删除")
+                                        onClicked: { if (!Profiles.removeProfileByName(p.name)) root.statusMessage = Profiles.lastError() }
+                                    }
+                                }
+                            }
+
+                            // Editor (add or update-by-name).
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: root.gap
+                                rowSpacing: 6
+                                Layout.fillWidth: true
+                                Label { text: qsTr("名称"); color: root.fgMuted }
+                                TextField { id: eName; Layout.fillWidth: true; placeholderText: qsTr("profile 名") }
+                                Label { text: qsTr("Base URL"); color: root.fgMuted }
+                                TextField { id: eBase; Layout.fillWidth: true; placeholderText: "https://api.openai.com" }
+                                Label { text: qsTr("协议"); color: root.fgMuted }
+                                ComboBox { id: eProto; model: Profiles.protocols() }
+                                Label { text: qsTr("默认模型"); color: root.fgMuted }
+                                TextField { id: eModel; Layout.fillWidth: true }
+                                Label { text: qsTr("超时(秒)"); color: root.fgMuted }
+                                SpinBox { id: eTimeout; from: 0; to: 1800; value: 300; editable: true }
+                                Label { text: qsTr("API 密钥"); color: root.fgMuted }
+                                TextField { id: eKey; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: qsTr("留空则不改") }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: root.gap
+                                Button {
+                                    text: root.editingName.length > 0 ? qsTr("保存修改") : qsTr("新增 profile")
+                                    enabled: eName.text.length > 0 && eBase.text.length > 0
+                                    onClicked: {
+                                        if (!Profiles.addProfile(eName.text, eBase.text, eProto.currentText, eModel.text, eTimeout.value)) {
+                                            root.statusMessage = Profiles.lastError(); return
+                                        }
+                                        if (eKey.text.length > 0 && !Profiles.setCredential(eName.text, eKey.text)) {
+                                            root.statusMessage = Profiles.lastError(); return
+                                        }
+                                        root.resetProfileEditor()
+                                    }
+                                }
+                                Button { text: qsTr("取消"); visible: root.editingName.length > 0; onClicked: root.resetProfileEditor() }
+                                Item { Layout.fillWidth: true }
+                            }
+                        }
+                    }
+
+                    // ---- Retention ----
+                    GroupBox {
+                        Layout.fillWidth: true
+                        label: Text { text: qsTr("历史保留与存储"); color: root.fgMuted; font.pixelSize: 13 }
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 8
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: root.gap
+                                rowSpacing: 6
+                                Layout.fillWidth: true
+                                Label { text: qsTr("最多保留任务数"); color: root.fgMuted }
+                                SpinBox {
+                                    id: sbRows; from: 1; to: 100000; editable: true
+                                    value: Settings.retentionRows
+                                    onValueModified: Settings.retentionRows = value
+                                }
+                                Label { text: qsTr("存储上限 (MiB)"); color: root.fgMuted }
+                                SpinBox {
+                                    id: sbMiB; from: 64; to: 1024 * 1024; editable: true
+                                    value: Math.round(Settings.retentionBytes / (1024 * 1024))
+                                    onValueModified: Settings.retentionBytes = value * 1024 * 1024
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: root.gap
+                                Text { text: qsTr("已用:") + " " + (Settings.usedBytes / (1024 * 1024)).toFixed(1) + " MiB"; color: root.fgMuted }
+                                Item { Layout.fillWidth: true }
+                                Button {
+                                    text: qsTr("立即清理")
+                                    onClicked: { var n = Settings.applyRetention(); root.statusMessage = qsTr("已清理 %1 个任务").arg(n) }
+                                }
+                            }
+                            Text { text: qsTr("置顶(pinned)的任务不计入预算、不会被清理。"); color: root.fgMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                        }
+                    }
+
+                    // ---- Trusted hosts ----
+                    GroupBox {
+                        Layout.fillWidth: true
+                        label: Text { text: qsTr("可信主机（SSRF 例外 · 重启生效）"); color: root.fgMuted; font.pixelSize: 13 }
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 8
+                            Repeater {
+                                model: Settings.trustedHosts
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    Text { text: modelData; color: root.fg; Layout.fillWidth: true }
+                                    Button { text: "✕"; onClicked: Settings.removeTrustedHost(modelData) }
+                                }
+                            }
+                            Text { visible: Settings.trustedHosts.length === 0; text: qsTr("（无）"); color: root.fgMuted }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: root.gap
+                                TextField { id: eHost; Layout.fillWidth: true; placeholderText: qsTr("仅主机名，如 gw.internal") }
+                                Button { text: qsTr("添加"); enabled: eHost.text.trim().length > 0; onClicked: { Settings.addTrustedHost(eHost.text); eHost.text = "" } }
+                            }
+                        }
+                    }
+
+                    // ---- Theme + WebP ----
+                    GroupBox {
+                        Layout.fillWidth: true
+                        label: Text { text: qsTr("外观与格式"); color: root.fgMuted; font.pixelSize: 13 }
+                        RowLayout {
+                            width: parent.width
+                            spacing: root.gap
+                            Label { text: qsTr("浅色主题"); color: root.fgMuted }
+                            Switch {
+                                checked: Settings.themeName === "light"
+                                onToggled: Settings.themeName = checked ? "light" : "dark"
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                text: qsTr("本机 Qt 无 WebP 解码插件：webp 结果会落盘但无法在应用内预览。")
+                                color: root.fgMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.maximumWidth: 360
+                            }
+                        }
+                    }
+                    Item { Layout.preferredHeight: root.gapLg }
+                }
             }
         }
     }
