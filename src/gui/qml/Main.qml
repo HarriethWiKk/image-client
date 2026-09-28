@@ -80,6 +80,34 @@ Window {
         return root.fgMuted
     }
 
+    // Actions shared by the buttons and the keyboard shortcuts (SPEC 9.1: 生成 / 取消 / 切模型).
+    function doGenerate() {
+        if (busy || fPrompt.text.length === 0)
+            return
+        var sz = cbSize.editText ? cbSize.editText.text : cbSize.currentText
+        var id = Jobs.referenceSources.length > 0
+            ? Jobs.generateEdit(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
+            : Jobs.generateJob(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
+        if (!id)
+            statusMessage = Jobs.lastError()
+    }
+    function doCancel() {
+        if (busy && currentJobId.length > 0)
+            Jobs.cancel(currentJobId)
+    }
+    // "切模型": step to the next configured Provider (each maps to an endpoint/model family).
+    function cycleProvider() {
+        var names = []
+        for (var i = 0; i < Profiles.profiles.length; ++i)
+            names.push(Profiles.profiles[i].name)
+        if (names.length === 0) {
+            statusMessage = qsTr("还没有可切换的 Provider")
+            return
+        }
+        var idx = (names.indexOf(fProfile.text) + 1) % names.length
+        fProfile.text = names[idx]
+    }
+
     ListModel { id: results }
 
     // Stage one source (from drop or file dialog). The controller emits referencesChanged() on
@@ -235,16 +263,9 @@ Window {
                                     text: root.busy ? qsTr("生成中…")
                                           : (Jobs.referenceSources.length > 0 ? qsTr("图生图") : qsTr("生成"))
                                     enabled: !root.busy && fPrompt.text.length > 0
-                                    onClicked: {
-                                        var sz = cbSize.editText ? cbSize.editText.text : cbSize.currentText
-                                        var id = Jobs.referenceSources.length > 0
-                                            ? Jobs.generateEdit(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
-                                            : Jobs.generateJob(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
-                                        if (!id)
-                                            root.statusMessage = Jobs.lastError()
-                                    }
+                                    onClicked: root.doGenerate()
                                 }
-                                Button { text: qsTr("取消"); enabled: root.busy && root.currentJobId.length > 0; onClicked: Jobs.cancel(root.currentJobId) }
+                                Button { text: qsTr("取消"); enabled: root.busy && root.currentJobId.length > 0; onClicked: root.doCancel() }
                                 BusyIndicator { running: root.busy; visible: root.busy; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
                                 Item { Layout.fillWidth: true }
                             }
@@ -724,6 +745,31 @@ Window {
                 }
             }
         }
+    }
+
+    // GUI-G keyboard shortcuts (SPEC 9.1 "键盘直达：生成 / 切模型 / 取消 / 历史导航"). Window-context
+    // Shortcuts; each is disabled while the lightbox is open so its own [Esc/←/→/C/S/O] keys win.
+    // "历史导航" here = jump to the history view (arrow keys then move within its GridView, and the
+    // lightbox wraps through results) -- in-app direct access, not a system-wide hotkey.
+    Shortcut {
+        sequence: "Ctrl+Return"
+        enabled: !Lightbox.open && root.view === 0
+        onActivated: root.doGenerate()
+    }
+    Shortcut {
+        sequence: "Ctrl+M"
+        enabled: !Lightbox.open && root.view === 0
+        onActivated: root.cycleProvider()
+    }
+    Shortcut {
+        sequence: "Escape"
+        enabled: !Lightbox.open && root.busy
+        onActivated: root.doCancel()
+    }
+    Shortcut {
+        sequence: "Ctrl+H"
+        enabled: !Lightbox.open
+        onActivated: root.view = 1
     }
 
     // GUI-D lightbox: binds to the Lightbox controller; opens when a result thumbnail is clicked.

@@ -52,7 +52,7 @@ public:
     // viewer (the fallback for formats this Qt cannot decode, e.g. WebP -- SPEC 6.5).
     Q_INVOKABLE bool copyAssetTo(const QString &relPath, const QString &destUrl);
     Q_INVOKABLE bool openExternally(const QString &relPath);
-    QString lastError() const { return m_lastError; }
+    Q_INVOKABLE QString lastError() const { return m_lastError; }
 
 private:
     bool m_ready = false;
