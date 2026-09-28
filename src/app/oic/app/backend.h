@@ -45,9 +45,19 @@ public:
     oic::store::AssetStore *assetStore() const { return m_assets.get(); }
     oic::jobs::JobManager *jobs() const { return m_jobs.get(); }
 
+    // Resolve a stored asset's relPath to an absolute path, refusing anything that would
+    // escape the assets root (the same guard the image provider applies). Empty on rejection.
+    Q_INVOKABLE QString assetAbsolutePath(const QString &relPath) const;
+    // "Save As": copy a stored asset to a destination file URL. / open it in the system
+    // viewer (the fallback for formats this Qt cannot decode, e.g. WebP -- SPEC 6.5).
+    Q_INVOKABLE bool copyAssetTo(const QString &relPath, const QString &destUrl);
+    Q_INVOKABLE bool openExternally(const QString &relPath);
+    QString lastError() const { return m_lastError; }
+
 private:
     bool m_ready = false;
     QString m_error;
+    mutable QString m_lastError;
     oic::store::Paths m_paths;
     qint64 m_assetQuotaBytes = 0;
     std::unique_ptr<oic::store::Database> m_database;

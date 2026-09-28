@@ -134,6 +134,7 @@ private slots:
     void profileControllerListAndDetail();
     void settingsControllerPersistence();
     void settingsApplyRetentionDeletesAssetFiles();
+    void backendCopyAssetAndGuard();
     void settingsControllerRetentionPrunes();
     void lightboxControllerStateMachine();
 };
@@ -693,6 +694,33 @@ void TstApp::settingsApplyRetentionDeletesAssetFiles()
 
     QVERIFY2(!QFile::exists(absFile), "applyRetention must delete the pruned asset from disk");
     QVERIFY(backend.database()->assetsForJob(QStringLiteral("keep"), &error).isEmpty());
+}
+
+void TstApp::backendCopyAssetAndGuard()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    const QByteArray png = fakePng(40);
+    const oic::store::AssetWriteResult wr =
+        backend.assetStore()->write(QStringLiteral("jx"), QStringLiteral("a1"), QStringLiteral("image/png"), png);
+    QVERIFY2(wr.ok(), qPrintable(wr.error));
+
+    const QString dest = QDir(dir.path()).filePath(QStringLiteral("copy.png"));
+    QVERIFY2(backend.copyAssetTo(wr.relPath, QUrl::fromLocalFile(dest).toString()), qPrintable(backend.lastError()));
+    QFile out(dest);
+    QVERIFY(out.open(QIODevice::ReadOnly));
+    QCOMPARE(out.readAll(), png);
+
+    // A traversal relPath is rejected (never leaves the assets root), for copy and open alike.
+    const QString evil = QDir(dir.path()).filePath(QStringLiteral("evil.png"));
+    QVERIFY(!backend.copyAssetTo(QStringLiteral("../../evil.png"), QUrl::fromLocalFile(evil).toString()));
+    QVERIFY(!QFile::exists(evil));
+    QVERIFY(!backend.openExternally(QStringLiteral("../../outside.png")));  // guard rejects, no launch
 }
 
 void TstApp::settingsControllerRetentionPrunes()

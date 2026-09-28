@@ -2,6 +2,12 @@
 // Copyright 2026 HarriethWiKk
 #include "oic/app/backend.h"
 
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QUrl>
+
 #include "oic/app/settingscontroller.h"
 #include "oic/net/transport.h"
 
@@ -62,6 +68,64 @@ bool Backend::initWithPaths(const oic::store::Paths &paths, const oic::jobs::Job
     m_jobs = std::make_unique<oic::jobs::JobManager>(deps);
 
     m_ready = true;
+    return true;
+}
+
+QString Backend::assetAbsolutePath(const QString &relPath) const
+{
+    m_lastError.clear();
+    if (m_paths.assets.isEmpty()) {
+        m_lastError = QStringLiteral("后端未就绪");
+        return {};
+    }
+    const QString rootClean = QDir::cleanPath(m_paths.assets);
+    const QString abs = QDir::cleanPath(QDir(m_paths.assets).filePath(relPath));
+    if (abs != rootClean && !abs.startsWith(rootClean + QLatin1Char('/'))) {
+        m_lastError = QStringLiteral("非法资源路径");
+        return {};
+    }
+    return abs;
+}
+
+bool Backend::copyAssetTo(const QString &relPath, const QString &destUrl)
+{
+    const QString src = assetAbsolutePath(relPath);
+    if (src.isEmpty())
+        return false;
+    const QUrl url(destUrl);
+    const QString dest = url.isLocalFile() ? url.toLocalFile() : destUrl;
+    if (dest.isEmpty()) {
+        m_lastError = QStringLiteral("未选择保存位置");
+        return false;
+    }
+    QFile in(src);
+    if (!in.open(QIODevice::ReadOnly)) {
+        m_lastError = QStringLiteral("无法打开源文件");
+        return false;
+    }
+    const QByteArray data = in.readAll();
+    in.close();
+    QFile out(dest);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        m_lastError = QStringLiteral("无法写入 %1").arg(QFileInfo(dest).fileName());
+        return false;
+    }
+    const bool ok = out.write(data) == data.size();
+    out.close();
+    if (!ok)
+        m_lastError = QStringLiteral("保存未写完");
+    return ok;
+}
+
+bool Backend::openExternally(const QString &relPath)
+{
+    const QString abs = assetAbsolutePath(relPath);
+    if (abs.isEmpty())
+        return false;
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(abs))) {
+        m_lastError = QStringLiteral("无法用外部程序打开");
+        return false;
+    }
     return true;
 }
 
