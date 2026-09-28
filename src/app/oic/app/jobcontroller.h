@@ -28,7 +28,7 @@ public:
     Q_INVOKABLE QString generateJob(const QString &profileName, const QString &model, const QString &prompt,
                                     const QString &size, int n, const QString &protocolHint = QString());
     Q_INVOKABLE bool cancel(const QString &jobId);
-    QString lastError() const { return m_lastError; }
+    Q_INVOKABLE QString lastError() const { return m_lastError; }
 
 Q_SIGNALS:
     void jobStarted(const QString &jobId);

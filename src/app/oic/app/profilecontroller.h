@@ -42,7 +42,7 @@ public:
                                 const QString &imageModel, int timeoutSeconds);
     Q_INVOKABLE bool setCredential(const QString &name, const QString &key);
     Q_INVOKABLE QStringList profileNames() const { return names(); }
-    QString lastError() const { return m_lastError; }
+    Q_INVOKABLE QString lastError() const { return m_lastError; }
 
 Q_SIGNALS:
     void changed();
