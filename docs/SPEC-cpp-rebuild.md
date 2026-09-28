@@ -248,12 +248,12 @@ size : 自由形式 "WxH"，仅做长度 ≤64 校验，不校验白名单（三
 - `relPath` 删除路径先 `cleanPath` 再比较**两侧 canonical 形式**，防目录树里的重解析点把删除指向树外。
 - **"只校验不修复"是错的，已改为校验→修复→再校验**（`enforcePrivateAcl`：显式写入 当前用户 / SYSTEM / Administrators 三条 `FILE_ALL_ACCESS`，并用 `PROTECTED_DACL_SECURITY_INFORMATION` 断开继承）。依据是第一次真机运行：在 `D:\tmp` 下新建的目录继承了 `S-1-5-11`(Authenticated Users) 与 `S-1-5-32-545`(BUILTIN\Users)，只校验的设计于是**拒绝保存出图结果**。老实现的毛病是"建目录不指定 mode"，正确修法是把 mode 显式设成私有，而不是发现不合规就罢工；已存在的目录同样处理（早于本策略建立的 job 目录正是可能松的那个）。
 
-### 6.2 sqlite schema `[已实现，user_version = 1]`
+### 6.2 sqlite schema `[已实现，user_version = 2]`
 
 新能力——旧仓重启即失忆（`MAX_JOBS=64` 静默淘汰、无分页），本条是本次重建最主要的功能增量。
 
 ```sql
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 profiles(name TEXT PK, base_url TEXT NOT NULL, protocol TEXT NOT NULL,
          image_model TEXT, allowed_models TEXT, timeout_s INTEGER,
          credential_target TEXT NOT NULL, created_at INTEGER);
@@ -264,7 +264,8 @@ jobs(id TEXT PK, created_at, updated_at, mode TEXT, protocol TEXT, profile TEXT,
      pinned INTEGER DEFAULT 0, deleted_at INTEGER);
 assets(id TEXT PK, job_id REFERENCES jobs, ordinal INTEGER, filename TEXT,
        rel_path TEXT, bytes INTEGER, mime TEXT, width INTEGER, height INTEGER,
-       sha256 TEXT, created_at INTEGER);
+       sha256 TEXT, created_at INTEGER,
+       role TEXT NOT NULL DEFAULT 'result');  -- 'result' | 'reference'（user_version 2 新增）
 CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 ```
 历史 UI 以 `jobs` 为唯一数据源，`pinned` 与软删除提供旧仓完全没有的保留控制。保留上限（默认建议 500 行 + 2 GiB 配额）作为设置项。
@@ -272,6 +273,7 @@ CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 实现要点（与草案的差别都在这里）：
 
 - 连接按线程命名（`oic-store-<threadId>`），开 `journal_mode=WAL` + `busy_timeout=5000` + `foreign_keys=ON`。GUI 与 MCP 是两个进程共享一个文件，回滚日志模式会让第二个写者整段事务被挡；两线程各写 25 行实测互不阻塞。
+- **user_version 2（2026-09-28，GUI-A）**：assets 加 `role` 列（区分结果图与编辑参考图，使编辑任务能从历史连参考图一起重放）。`applyMigrations` 改成**增量**：v0→v1 建表、v1→v2 `ALTER TABLE assets ADD COLUMN role`；全新库也走"建 v1 表 + ALTER 到 v2"这一条路径，避免两套 schema 定义漂移。`user_version` 在 `BEGIN IMMEDIATE` 事务内**重读**，防并发首开时两个 opener 都跑非幂等 ALTER 撞"重复列名 role"（实测 3/8 → 修复后 20/20）。已有行按默认回填 `'result'`。
 - **并发首次开库（2026-09-28 修复）**：`JobManager` 的多个 worker 线程各自 open 同一个**尚不存在**的库时，会被 `database is locked` 打挂（实测 `tst_jobmanager` 30 次跑红 15 次）。根因有三层，缺一不可，全部实测钉住：
   1. `journal_mode=WAL` 的**首次**切换要抢排他锁，而 SQLite 的 busy handler **对模式切换不生效**（即使 busy_timeout=5000ms 也失败）。修法：`ensureWalMode()` 重试切换（该 PRAGMA 幂等，已 WAL 时零成本）。
   2. Qt QSQLITE 驱动下，**存活的 `QSqlQuery` 游标**会让随后的 `BEGIN IMMEDIATE` 报 `database is locked`（实测游标存活 38/8 reps 失败，`finish()` 后 0）。修法：读 `user_version` 的游标用独立作用域 + `finish()`，不让它跨进事务。
@@ -542,7 +544,7 @@ UPX：旧 spec 开了 `upx=True`，且自己记录"UPX 缺失时静默失效，�
 
 覆盖文件：`tests/tst_endpoints.cpp`、`tst_models.cpp`、`tst_urlpolicy.cpp`、`tst_decode.cpp`、`tst_retrypolicy.cpp`、`tst_transport.cpp`、`tst_imageprobe.cpp`、`tst_store.cpp`、`tst_assets.cpp`、`tst_credentials.cpp`、`tst_protocol.cpp`、`tst_parsers.cpp`、`tst_jobs.cpp`、`tst_jobmanager.cpp`、`tst_jobs_integration.cpp`、`tst_app.cpp`。
 
-QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 382 条用例全绿 / 16 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 19 · assets 42 · protocol 69 · parsers 24 · credentials 21 · jobs 14 · jobmanager 7 · jobs_integration 4 · app 10），MSVC `/W4` 无告警。jobs 三层于 2026-09-28 落地（§9.2 落地记录）；store 同日 +5（并发首开 / PK 拒绝 / 软删 not-found / `assetRoleRoundTrips` / `migratesV1DatabaseAddingRoleColumn`，§6.2）；GUI-A 地基（oic-app：Backend / AssetImageProvider / 控制器）同日加 `tst_app`（§9）。
+QTest + CTest，`qt_add_executable` 经 `oic_add_test()` 注册，ctest 通过 `ENVIRONMENT PATH` 指向 Qt bin（本机 Qt 非系统安装）。**实测 383 条用例全绿 / 16 个测试二进制**（endpoints 15 · models 47 · urlpolicy 45 · decode 10 · retrypolicy 24 · transport 15 · imageprobe 16 · store 19 · assets 42 · protocol 69 · parsers 24 · credentials 21 · jobs 14 · jobmanager 7 · jobs_integration 4 · app 11），MSVC `/W4` 无告警。jobs 三层于 2026-09-28 落地（§9.2 落地记录）；store 同日 +5（并发首开 / PK 拒绝 / 软删 not-found / `assetRoleRoundTrips` / `migratesV1DatabaseAddingRoleColumn`，§6.2）；GUI-A 地基（oic-app：Backend / AssetImageProvider / 控制器）同日加 `tst_app`（§9）。
 
 覆盖 §4 与 §5.2 的原有断言：
 
