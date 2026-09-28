@@ -117,6 +117,8 @@ private slots:
     void profileControllerCrudDerivesCredentialTarget();
     void historyModelRolesPinAndDelete();
     void jobControllerGenerateFinishes();
+    void jobControllerWrapperSurfacesError();
+    void profileControllerInvokables();
     void settingsControllerRetentionPrunes();
 };
 
@@ -322,6 +324,45 @@ void TstApp::settingsControllerRetentionPrunes()
     settings.setRetentionRows(1);  // keep 1, drop the 2 oldest unpinned
     QCOMPARE(settings.applyRetention(), 2);
     QCOMPARE(backend.database()->listJobs(10, 0, false, &error).size(), 1);
+}
+
+void TstApp::jobControllerWrapperSurfacesError()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    JobController jobs(&backend);
+    // No profile saved -> the QML wrapper returns empty AND surfaces why via lastError(),
+    // which a plain return value cannot convey.
+    const QString id = jobs.generateJob(QStringLiteral("missing"), QStringLiteral("gpt-image-2"),
+                                        QStringLiteral("a cat"), QStringLiteral("1024x1024"), 1);
+    QVERIFY(id.isEmpty());
+    QVERIFY(!jobs.lastError().isEmpty());
+}
+
+void TstApp::profileControllerInvokables()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.addProfile(QStringLiteral("ok"), QStringLiteral("https://api.example.com"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300));
+    QVERIFY(profiles.profileNames().contains(QStringLiteral("ok")));
+
+    // An invalid profile name (leading '-') is rejected by targetNameFor (SPEC 6.3); the
+    // wrapper must set lastError rather than silently fail.
+    QVERIFY(!profiles.addProfile(QStringLiteral("-bad"), QStringLiteral("https://api.example.com"),
+                                  QStringLiteral("openai"), QStringLiteral(""), 0));
+    QVERIFY(!profiles.lastError().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TstApp)

@@ -37,6 +37,13 @@ public:
     bool eraseCredential(const QString &name, QString *error);
     void refresh();
 
+    // QML-facing wrappers (no out-params); failures leave lastError() set.
+    Q_INVOKABLE bool addProfile(const QString &name, const QString &baseUrl, const QString &protocol,
+                                const QString &imageModel, int timeoutSeconds);
+    Q_INVOKABLE bool setCredential(const QString &name, const QString &key);
+    Q_INVOKABLE QStringList profileNames() const { return names(); }
+    QString lastError() const { return m_lastError; }
+
 Q_SIGNALS:
     void changed();
     void currentProfileChanged();
@@ -45,6 +52,7 @@ private:
     Backend *m_backend;
     QList<oic::store::Profile> m_profiles;
     QString m_current;
+    QString m_lastError;
 };
 
 }  // namespace oic::app

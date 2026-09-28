@@ -73,6 +73,15 @@ QString JobController::generate(const QString &profileName, const QString &model
     return jobId;
 }
 
+QString JobController::generateJob(const QString &profileName, const QString &model, const QString &prompt,
+                                   const QString &size, int n, const QString &protocolHint)
+{
+    QString error;
+    const QString jobId = generate(profileName, model, prompt, size, n, protocolHint, &error);
+    m_lastError = error;
+    return jobId;
+}
+
 bool JobController::cancel(const QString &jobId)
 {
     return m_backend != nullptr && m_backend->jobs() != nullptr && m_backend->jobs()->cancel(jobId);

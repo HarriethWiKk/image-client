@@ -114,4 +114,21 @@ bool ProfileController::eraseCredential(const QString &name, QString *error)
     return oic::secret::eraseSecret(target, error);
 }
 
+bool ProfileController::addProfile(const QString &name, const QString &baseUrl, const QString &protocol,
+                                   const QString &imageModel, int timeoutSeconds)
+{
+    QString error;
+    const bool ok = saveProfile(name, baseUrl, protocol, imageModel, timeoutSeconds, &error);
+    m_lastError = error;
+    return ok;
+}
+
+bool ProfileController::setCredential(const QString &name, const QString &key)
+{
+    QString error;
+    const bool ok = saveCredential(name, key, &error);
+    m_lastError = error;
+    return ok;
+}
+
 }  // namespace oic::app

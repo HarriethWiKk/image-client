@@ -23,7 +23,12 @@ public:
     QString generate(const QString &profileName, const QString &model, const QString &prompt, const QString &size,
                      int n, const QString &protocolHint, QString *error);
 
+    // QML-facing wrapper: no out-param, so QML can call it; a rejected submit (unknown
+    // profile, full queue, store error) leaves lastError() set and returns an empty id.
+    Q_INVOKABLE QString generateJob(const QString &profileName, const QString &model, const QString &prompt,
+                                    const QString &size, int n, const QString &protocolHint = QString());
     Q_INVOKABLE bool cancel(const QString &jobId);
+    QString lastError() const { return m_lastError; }
 
 Q_SIGNALS:
     void jobStarted(const QString &jobId);
@@ -32,6 +37,7 @@ Q_SIGNALS:
 
 private:
     Backend *m_backend;
+    QString m_lastError;
 };
 
 }  // namespace oic::app
