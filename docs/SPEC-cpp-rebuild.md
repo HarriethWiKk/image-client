@@ -311,12 +311,12 @@ Persist = CRED_PERSIST_LOCAL_MACHINE     UserName = "image-client"
 旧仓用 Pillow 时 `Image.DecompressionBombError` 是**默认开启**的（`assets.py:176` 显式捕获）。Qt 侧必须显式设置**有限**分配上限：
 ```cpp
 QImageReader r(...);
-r.setAllocationLimit(2048);       // 2 GiB（单位 MiB）；必须是有限值，见下更正
+r.setAllocationLimit(256);        // MiB；= Qt 默认；必须有限，见下更正
 ```
 解码仅用于取尺寸与校验"确实是图片"，结果图字节原样落盘，不做重编码。
 
 **更正（2026-09-28，owner 同意；本条 `[冻结]` 原写法经实测有两处错误，GUI-A 落地时暴露）：**
-1. 原写 `setAllocationLimit(0)` 并注明"0=2GiB上限"——**反了**。Qt 官方文档原话 `"If mbLimit is 0, the allocation size check will be disabled."`，即 **0 是关闭检查（无限制）**，恰是本条要防的解压炸弹场景。改为传有限值 `2048`（MiB）。
+1. 原写 `setAllocationLimit(0)` 并注明"0=2GiB上限"——**反了**。Qt 官方文档原话 `"If mbLimit is 0, the allocation size check will be disabled."`，即 **0 是关闭检查（无限制）**，恰是本条要防的解压炸弹场景。改为传有限值 `256`（MiB，等于 Qt 自身默认；本工具最大出图 4K≈33MB，留 8× 余量）。
 2. 原写 `r.setImageCountLimit(1)`——**`QImageReader` 根本没有这个方法**（Qt 6.8.3 实测 `qimagereader.h` 只有 `setAllocationLimit` / `imageCount` / `jumpToNextImage`）。且无必要：`read()` 只解当前帧，多帧 GIF/TIFF 不会逐帧分配，有限分配上限已约束这一帧。
 
 **落点说明（2026-09-27）**：store 侧需要的只是尺寸与"是不是图"，而 `QImageReader` 会把 Qt6Gui 拖进 `image-client-mcp.exe`，抵销 §11.2 那半边的小体积。因此 `store/imageprobe.cpp` 直接解析容器头（PNG/JPEG/GIF/BMP/WebP 三种 chunk），§6.4 的开关在真正解像素的地方（GUI 显示与预览）仍然必须设置 —— 那部分随 GUI 任务落地。

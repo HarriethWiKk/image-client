@@ -20,8 +20,10 @@ public:
 
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
 
-    // Default cap; large enough for any real result, small enough to reject a bomb.
-    static constexpr int kAllocationLimitMiB = 2048;
+    // Default cap. 256 MiB matches Qt's own default and is ~8x the decoded bytes of the
+    // largest real result here (a 4K RGBA image is ~33 MiB), while still refusing a
+    // decompression bomb. Must be finite -- 0 would DISABLE the check (SPEC 6.4).
+    static constexpr int kAllocationLimitMiB = 256;
 
 private:
     static QImage placeholder(const QSize &size);
