@@ -45,6 +45,11 @@ public:
     oic::store::AssetStore *assetStore() const { return m_assets.get(); }
     oic::jobs::JobManager *jobs() const { return m_jobs.get(); }
 
+    // The wired job deps (sender / secrets / clock). Retained so GUI-side controllers that
+    // need a one-off network call (ModelsController's /v1/models fetch) run through the very
+    // same transport + credential seams the job pool uses -- never a second, unguarded client.
+    const oic::jobs::JobDeps &deps() const { return m_deps; }
+
     // Resolve a stored asset's relPath to an absolute path, refusing anything that would
     // escape the assets root (the same guard the image provider applies). Empty on rejection.
     Q_INVOKABLE QString assetAbsolutePath(const QString &relPath) const;
@@ -60,6 +65,7 @@ private:
     mutable QString m_lastError;
     oic::store::Paths m_paths;
     qint64 m_assetQuotaBytes = 0;
+    oic::jobs::JobDeps m_deps;
     std::unique_ptr<oic::store::Database> m_database;
     std::unique_ptr<oic::store::AssetStore> m_assets;
     std::unique_ptr<oic::jobs::JobManager> m_jobs;

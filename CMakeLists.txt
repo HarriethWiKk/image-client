@@ -15,7 +15,7 @@ if(MSVC)
   add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network Sql Test)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network Sql Test Concurrent)
 
 qt_standard_project_setup(REQUIRES 6.8)
 

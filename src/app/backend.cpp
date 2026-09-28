@@ -51,6 +51,7 @@ bool Backend::initWithPaths(const oic::store::Paths &paths, const oic::jobs::Job
 
     m_paths = paths;
     m_assetQuotaBytes = deps.assetQuotaBytes;
+    m_deps = deps;  // retained for ModelsController's /v1/models fetch (same sender + secrets)
 
     if (!oic::store::ensureDirectories(&m_paths))
         return fail(m_paths.error.isEmpty() ? QStringLiteral("无法创建数据目录") : m_paths.error);

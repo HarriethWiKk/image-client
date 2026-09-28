@@ -126,6 +126,10 @@ private slots:
 
     void prepareWiresProtocolAndAuth_data();
     void prepareWiresProtocolAndAuth();
+
+    void prepareModelListPerProtocol_data();
+    void prepareModelListPerProtocol();
+    void parseModelListShapes();
 };
 
 void TstProtocol::resolveProtocolExplicitAndAuto_data()
@@ -767,6 +771,77 @@ void TstProtocol::prepareWiresProtocolAndAuth()
                  qPrintable(out.absoluteUrl));
         QVERIFY2(!out.absoluteUrl.contains(QStringLiteral("?key=")), qPrintable(out.absoluteUrl));
     }
+}
+
+void TstProtocol::prepareModelListPerProtocol_data()
+{
+    QTest::addColumn<QString>("base");
+    QTest::addColumn<QString>("protocolHint");
+    QTest::addColumn<QString>("expectedUrl");
+    QTest::addColumn<QString>("expectedAuthName");
+    QTest::addColumn<QString>("expectedAuthValue");
+
+    QTest::newRow("openai appends v1/models") << "https://api.openai.com" << "" << "https://api.openai.com/v1/models"
+                                              << "Authorization" << "Bearer k";
+    QTest::newRow("openai versioned base") << "https://api.openai.com/v1" << "openai" << "https://api.openai.com/v1/models"
+                                           << "Authorization" << "Bearer k";
+    QTest::newRow("grok compatible") << "https://api.x.ai/v1" << "grok" << "https://api.x.ai/v1/models"
+                                     << "Authorization" << "Bearer k";
+    QTest::newRow("gemini v1beta collection") << "https://generativelanguage.googleapis.com" << "gemini"
+                                              << "https://generativelanguage.googleapis.com/v1beta/models"
+                                              << "x-goog-api-key" << "k";
+}
+
+void TstProtocol::prepareModelListPerProtocol()
+{
+    QFETCH(const QString, base);
+    QFETCH(const QString, protocolHint);
+    QFETCH(const QString, expectedUrl);
+    QFETCH(const QString, expectedAuthName);
+    QFETCH(const QString, expectedAuthValue);
+
+    QString error;
+    const OutgoingRequest out = prepareModelList(base, QStringLiteral("  k  "), protocolHint, &error);
+    QVERIFY2(out.ok, qPrintable(error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(out.method, QByteArrayLiteral("GET"));
+    QCOMPARE(out.absoluteUrl, expectedUrl);
+    // The key never rides in the URL -- it is header-only, exactly like the generate path (SPEC 5.6).
+    QVERIFY2(!out.absoluteUrl.contains(QStringLiteral("?key=")), qPrintable(out.absoluteUrl));
+    QCOMPARE(headerValue(out.headers, expectedAuthName.toUtf8().constData()), expectedAuthValue);
+}
+
+void TstProtocol::parseModelListShapes()
+{
+    auto compact = [](const QJsonObject &root) {
+        return QJsonDocument(root).toJson(QJsonDocument::Compact);
+    };
+
+    // OpenAI-compatible: data[].id, de-duplicated, blanks dropped.
+    QJsonObject openai;
+    openai.insert(QStringLiteral("data"), QJsonArray{
+                                              QJsonObject{{QStringLiteral("id"), QStringLiteral("gpt-image-2")}},
+                                              QJsonObject{{QStringLiteral("id"), QStringLiteral("gpt-image-2.5-flare")}},
+                                              QJsonObject{{QStringLiteral("id"), QStringLiteral("gpt-image-2")}},
+                                              QJsonObject{{QStringLiteral("id"), QStringLiteral("   ")}},
+                                          });
+    QCOMPARE(parseModelList(QStringLiteral("openai"), compact(openai)),
+             (QStringList{QStringLiteral("gpt-image-2"), QStringLiteral("gpt-image-2.5-flare")}));
+
+    // Gemini: models[].name with the "models/" prefix stripped and de-duplicated.
+    QJsonObject gemini;
+    gemini.insert(QStringLiteral("models"), QJsonArray{
+                                                QJsonObject{{QStringLiteral("name"), QStringLiteral("models/imagen-3.0-generate-002")}},
+                                                QJsonObject{{QStringLiteral("name"), QStringLiteral("models/gemini-2.0-flash")}},
+                                                QJsonObject{{QStringLiteral("name"), QStringLiteral("imagen-3.0-generate-002")}},
+                                            });
+    QCOMPARE(parseModelList(QStringLiteral("gemini"), compact(gemini)),
+             (QStringList{QStringLiteral("imagen-3.0-generate-002"), QStringLiteral("gemini-2.0-flash")}));
+
+    // A non-JSON body is an error, not a silently empty list.
+    QString error;
+    QVERIFY(parseModelList(QStringLiteral("openai"), QByteArrayLiteral("not json"), &error).isEmpty());
+    QVERIFY(!error.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TstProtocol)

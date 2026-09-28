@@ -711,4 +711,105 @@ OutgoingRequest prepare(const QString &baseUrl, const QString &apiKey, const QSt
     return out;
 }
 
+// ---------------------------------------------------------------- model catalog
+
+namespace {
+
+// Reuse the tested generation-endpoint derivation, then swap the trailing route for
+// "models". This keeps the version guessing (base already /v1, or a full endpoint)
+// identical to what candidateEndpoints() does for image requests.
+QString openAiModelsEndpoint(const QString &baseUrl)
+{
+    const QStringList candidates = core::candidateEndpoints(baseUrl, core::Route::Generations);
+    const QString generation = candidates.isEmpty()
+                                   ? core::joinUrl(core::normalizeBaseUrl(baseUrl), QStringLiteral("v1/images/generations"))
+                                   : candidates.first();
+    static const QLatin1String kRoute("images/generations");
+    if (generation.endsWith(kRoute)) {
+        return generation.left(generation.size() - kRoute.size()) + QStringLiteral("models");
+    }
+    return core::joinUrl(core::normalizeBaseUrl(baseUrl), QStringLiteral("v1/models"));
+}
+
+QString geminiModelsEndpoint(const QString &baseUrl)
+{
+    QString base = baseUrl.trimmed();
+    while (base.endsWith(QLatin1Char('/'))) {
+        base.chop(1);
+    }
+    if (base.isEmpty()) {
+        return {};
+    }
+    // A full generate endpoint (".../v1beta/models/<name>:generateContent") collapses back to
+    // its ".../models" collection.
+    const int modelsMark = base.indexOf(QLatin1String("/models/"));
+    if (modelsMark >= 0) {
+        return base.left(modelsMark) + QStringLiteral("/models");
+    }
+    QString path = QUrl(base).path();
+    while (path.endsWith(QLatin1Char('/'))) {
+        path.chop(1);
+    }
+    const QString lastSegment = path.section(QLatin1Char('/'), -1);
+    if (lastSegment != QLatin1String("v1") && lastSegment != QLatin1String("v1beta")
+        && lastSegment != QLatin1String("v1alpha")) {
+        base += QStringLiteral("/v1beta");
+    }
+    return base + QStringLiteral("/models");
+}
+
+}  // namespace
+
+OutgoingRequest prepareModelList(const QString &baseUrl, const QString &apiKey, const QString &protocolHint,
+                                 QString *error)
+{
+    OutgoingRequest out;
+    out.method = QByteArrayLiteral("GET");
+    // A model list carries no model name, so resolveProtocol falls back to the base host for an
+    // "auto" hint; an explicit profile protocol is trusted verbatim, exactly as in prepare().
+    const Protocol protocol = resolveProtocol(protocolHint, QString(), baseUrl, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return out;
+    }
+    const QByteArray key = apiKey.trimmed().toUtf8();
+    if (protocol == Protocol::Gemini) {
+        out.absoluteUrl = geminiModelsEndpoint(baseUrl);
+        if (out.absoluteUrl.isEmpty()) {
+            fail(error, QStringLiteral("Base URL 不能为空"));
+            return out;
+        }
+        out.headers.append({ QByteArrayLiteral("x-goog-api-key"), key });
+    } else {
+        out.absoluteUrl = openAiModelsEndpoint(baseUrl);
+        out.headers.append({ QByteArrayLiteral("Authorization"), "Bearer " + key });
+    }
+    out.ok = true;
+    return out;
+}
+
+QStringList parseModelList(const QString &protocolName, const QByteArray &body, QString *error)
+{
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        fail(error, QStringLiteral("模型列表解析失败：%1").arg(parseError.errorString()));
+        return {};
+    }
+    const QJsonObject root = doc.object();
+    const bool gemini = protocolName.trimmed().compare(QLatin1String("gemini"), Qt::CaseInsensitive) == 0;
+
+    QStringList result;
+    const QJsonArray entries = root.value(gemini ? QLatin1String("models") : QLatin1String("data")).toArray();
+    for (const QJsonValue &value : entries) {
+        QString id = value.toObject().value(gemini ? QLatin1String("name") : QLatin1String("id")).toString().trimmed();
+        if (gemini && id.startsWith(QLatin1String("models/"))) {
+            id = id.mid(sizeof("models/") - 1);
+        }
+        if (!id.isEmpty() && !result.contains(id)) {
+            result.append(id);
+        }
+    }
+    return result;
+}
+
 }  // namespace oic::protocol

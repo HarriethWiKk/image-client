@@ -122,4 +122,15 @@ QString geminiGenerateEndpoint(const QString &baseUrl, const QString &model, QSt
 OutgoingRequest prepare(const QString &baseUrl, const QString &apiKey, const QString &protocolHint,
                         const ImageRequest &request, QString *error = nullptr);
 
+// A GET for the provider's model catalog (SPEC 9.1 model switching). openai/grok hit
+// <base>/v1/models; Gemini hits <base>/v1beta/models. Auth mirrors prepare() (Bearer for
+// the OpenAI-compatible pair, x-goog-api-key for Gemini). absoluteUrl is always set -- a
+// model list has one obvious shape, no candidate probing.
+OutgoingRequest prepareModelList(const QString &baseUrl, const QString &apiKey, const QString &protocolHint,
+                                 QString *error = nullptr);
+
+// Extract the model id list from a /v1/models (data[].id) or Gemini (models[].name) body.
+// protocolName is "openai" | "grok" | "gemini"; unknown protocols are read as OpenAI.
+QStringList parseModelList(const QString &protocolName, const QByteArray &body, QString *error = nullptr);
+
 }  // namespace oic::protocol

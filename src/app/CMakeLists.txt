@@ -6,6 +6,7 @@ qt_add_library(oic-app STATIC
     oic/app/jobcontroller.h
     oic/app/settingscontroller.h
     oic/app/lightboxcontroller.h
+    oic/app/modelscontroller.h
     backend.cpp
     assetimageprovider.cpp
     historymodel.cpp
@@ -13,6 +14,7 @@ qt_add_library(oic-app STATIC
     jobcontroller.cpp
     settingscontroller.cpp
     lightboxcontroller.cpp
+    modelscontroller.cpp
 )
 
 target_include_directories(oic-app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -25,4 +27,5 @@ target_link_libraries(oic-app PUBLIC
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
+    Qt6::Concurrent
 )

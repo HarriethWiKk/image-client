@@ -24,6 +24,7 @@
 #include "oic/app/historymodel.h"
 #include "oic/app/jobcontroller.h"
 #include "oic/app/lightboxcontroller.h"
+#include "oic/app/modelscontroller.h"
 #include "oic/app/profilecontroller.h"
 #include "oic/app/settingscontroller.h"
 #include "oic/jobs/executor.h"
@@ -137,6 +138,7 @@ private slots:
     void backendCopyAssetAndGuard();
     void settingsControllerRetentionPrunes();
     void lightboxControllerStateMachine();
+    void modelsControllerProviderIsolation();
 };
 
 void TstApp::backendInitWithFakeDeps()
@@ -856,6 +858,75 @@ void TstApp::lightboxControllerStateMachine()
 
     // Every mutation notified (the view binds to `changed`).
     QVERIFY(changed.count() >= 20);
+}
+
+void TstApp::modelsControllerProviderIsolation()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+
+    Backend backend;
+    QString error;
+    oic::jobs::JobDeps deps = stubDeps(paths.database, paths.assets);
+    // A credential is present: the secrets seam's contract is to clear `absent` when it returns
+    // a key (the production reader does); stubDeps' default leaves the flag at its initial value.
+    deps.secrets = [](const QString &, QString *, bool *absent) {
+        if (absent != nullptr)
+            *absent = false;
+        return QByteArray("k");
+    };
+    // A per-host /v1/models responder: both providers expose "shared-model", only A has
+    // "a-only" and only B has "b-only" -- so a same-named model is disambiguated by provider.
+    deps.sender = [](const oic::net::Request &request) {
+        QJsonArray data;
+        data.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("shared-model")}});
+        data.append(QJsonObject{{QStringLiteral("id"),
+                                 request.url.host().contains(QLatin1String("a.")) ? QStringLiteral("a-only")
+                                                                                  : QStringLiteral("b-only")}});
+        QJsonObject body;
+        body.insert(QStringLiteral("data"), data);
+        oic::net::Reply reply;
+        reply.status = 200;
+        reply.contentType = QStringLiteral("application/json");
+        reply.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        return reply;
+    };
+    QVERIFY2(backend.initWithPaths(paths, deps, &error), qPrintable(error));
+
+    const auto addProfile = [&](const QString &name, const QString &base) {
+        oic::store::Profile profile;
+        profile.name = name;
+        profile.baseUrl = base;
+        profile.protocol = QStringLiteral("openai");
+        profile.imageModel = QStringLiteral("gpt-image-2");
+        profile.credentialTarget = QStringLiteral("profile/") + name;
+        QString writeError;
+        QVERIFY2(backend.database()->writeProfile(profile, &writeError), qPrintable(writeError));
+    };
+    addProfile(QStringLiteral("A"), QStringLiteral("https://a.example.com"));
+    addProfile(QStringLiteral("B"), QStringLiteral("https://b.example.com"));
+
+    ModelsController models(&backend);
+
+    models.refresh(QStringLiteral("A"));
+    QTRY_VERIFY_WITH_TIMEOUT(!models.loading(), 3000);
+    QVERIFY(models.error().isEmpty());
+    QCOMPARE(models.models(), (QStringList{QStringLiteral("shared-model"), QStringLiteral("a-only")}));
+
+    // The fetched list is cached back onto the profile's allowed_models (offline last-known).
+    QString storeError;
+    oic::store::Profile storedA;
+    for (const oic::store::Profile &p : backend.database()->profiles(&storeError))
+        if (p.name == QStringLiteral("A"))
+            storedA = p;
+    QCOMPARE(storedA.allowedModels, (QStringList{QStringLiteral("shared-model"), QStringLiteral("a-only")}));
+
+    // Switching provider replaces the list wholesale -- provider isolation, no bleed-through.
+    models.refresh(QStringLiteral("B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!models.loading(), 3000);
+    QCOMPARE(models.models(), (QStringList{QStringLiteral("shared-model"), QStringLiteral("b-only")}));
+    QVERIFY(!models.models().contains(QStringLiteral("a-only")));
 }
 
 QTEST_GUILESS_MAIN(TstApp)

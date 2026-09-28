@@ -86,8 +86,8 @@ Window {
             return
         var sz = cbSize.editText ? cbSize.editText.text : cbSize.currentText
         var id = Jobs.referenceSources.length > 0
-            ? Jobs.generateEdit(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
-            : Jobs.generateJob(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
+            ? Jobs.generateEdit(cbProvider.currentText, cbModel.currentText, fPrompt.text, sz, sbN.value, "")
+            : Jobs.generateJob(cbProvider.currentText, cbModel.currentText, fPrompt.text, sz, sbN.value, "")
         if (!id)
             statusMessage = Jobs.lastError()
     }
@@ -95,17 +95,43 @@ Window {
         if (busy && currentJobId.length > 0)
             Jobs.cancel(currentJobId)
     }
-    // "切模型": step to the next configured Provider (each maps to an endpoint/model family).
-    function cycleProvider() {
-        var names = []
-        for (var i = 0; i < Profiles.profiles.length; ++i)
-            names.push(Profiles.profiles[i].name)
-        if (names.length === 0) {
-            statusMessage = qsTr("还没有可切换的 Provider")
-            return
+    // Select a non-editable ComboBox entry by its model value. `currentText` is read-only on a
+    // non-editable ComboBox, so setting a selection by value must go through currentIndex.
+    function setCombo(combo, value) {
+        for (var i = 0; i < combo.count; ++i) {
+            if (combo.model[i] === value) {
+                combo.currentIndex = i
+                return
+            }
         }
-        var idx = (names.indexOf(fProfile.text) + 1) % names.length
-        fProfile.text = names[idx]
+    }
+
+    // Selecting a provider loads its base/protocol into the editor and (re)fetches its model list.
+    // The list is provider-scoped, so a same-named model under two providers stays distinct --
+    // generation submits the (provider, model) pair.
+    function selectProvider(name) {
+        var d = Profiles.profileDetail(name)
+        if (d && d.name === name) {
+            fBase.text = d.baseUrl
+            root.setCombo(cbProto, d.protocol)
+            if (d.imageModel && d.imageModel.length > 0)
+                cbModel.editText.text = d.imageModel
+        }
+        Models.refresh(name)
+    }
+    // 切模型: step the model picker within the current provider's list.
+    function cycleModel() {
+        if (cbModel.count > 0)
+            cbModel.currentIndex = (cbModel.currentIndex + 1) % cbModel.count
+    }
+    // 切 Provider: step to the next configured provider (and load its models).
+    function cycleProvider() {
+        if (cbProvider.count > 0) {
+            cbProvider.currentIndex = (cbProvider.currentIndex + 1) % cbProvider.count
+            selectProvider(cbProvider.currentText)
+        } else {
+            statusMessage = qsTr("还没有可切换的 Provider")
+        }
     }
 
     ListModel { id: results }
@@ -205,7 +231,22 @@ Window {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: root.gap
-                                TextField { id: fProfile; Layout.fillWidth: true; text: "default"; placeholderText: qsTr("Provider 名") }
+                                ComboBox {
+                                    id: cbProvider
+                                    Layout.fillWidth: true
+                                    editable: true
+                                    model: Profiles.profiles
+                                    textRole: "name"
+                                    onActivated: root.selectProvider(currentText)
+                                    Component.onCompleted: {
+                                        var idx = -1
+                                        for (var i = 0; i < model.length; ++i)
+                                            if (model[i].name === "default") { idx = i; break }
+                                        if (idx >= 0) currentIndex = idx
+                                        else { currentIndex = -1; editText.text = "default" }
+                                        root.selectProvider(currentText)
+                                    }
+                                }
                                 TextField { id: fKey; Layout.fillWidth: true; placeholderText: qsTr("API key"); echoMode: TextInput.Password }
                             }
                             RowLayout {
@@ -216,15 +257,16 @@ Window {
                                 Button {
                                     text: qsTr("保存连接")
                                     onClicked: {
-                                        if (!Profiles.addProfile(fProfile.text, fBase.text, cbProto.currentText, "", 0)) {
+                                        if (!Profiles.addProfile(cbProvider.currentText, fBase.text, cbProto.currentText, cbModel.currentText, 0)) {
                                             root.statusMessage = Profiles.lastError()
                                             return
                                         }
-                                        if (fKey.text.length > 0 && !Profiles.setCredential(fProfile.text, fKey.text)) {
+                                        if (fKey.text.length > 0 && !Profiles.setCredential(cbProvider.currentText, fKey.text)) {
                                             root.statusMessage = Profiles.lastError()
                                             return
                                         }
                                         root.statusMessage = qsTr("已保存 Provider")
+                                        Models.refresh(cbProvider.currentText)
                                     }
                                 }
                             }
@@ -250,11 +292,40 @@ Window {
                                 rowSpacing: 8
                                 Layout.fillWidth: true
                                 Label { text: qsTr("模型"); color: root.fgMuted }
-                                TextField { id: fModel; Layout.fillWidth: true; text: "gpt-image-2" }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    ComboBox {
+                                        id: cbModel
+                                        Layout.fillWidth: true
+                                        editable: true
+                                        model: Models.models
+                                        Component.onCompleted: editText.text = "gpt-image-2"
+                                    }
+                                    BusyIndicator {
+                                        running: Models.loading
+                                        visible: Models.loading
+                                        Layout.preferredWidth: 20
+                                        Layout.preferredHeight: 20
+                                    }
+                                    ToolButton {
+                                        text: "⟳"
+                                        hoverEnabled: true
+                                        ToolTip.text: qsTr("重新拉取该 Provider 的模型列表")
+                                        ToolTip.visible: hovered
+                                        onClicked: Models.refresh(cbProvider.currentText)
+                                    }
+                                }
                                 Label { text: qsTr("尺寸"); color: root.fgMuted }
                                 ComboBox { id: cbSize; editable: true; model: ["1024x1024", "1536x1024", "1024x1536", "auto"] }
                                 Label { text: qsTr("数量 n"); color: root.fgMuted }
                                 SpinBox { id: sbN; from: 1; to: 8 }
+                            }
+                            Text {
+                                visible: Models.error.length > 0
+                                text: Models.error
+                                color: root.fgMuted
+                                font.pixelSize: 11
                             }
                             RowLayout {
                                 Layout.fillWidth: true
@@ -603,7 +674,7 @@ Window {
                                         onClicked: {
                                             root.editingName = p.name
                                             eName.text = p.name; eName.enabled = false
-                                            eBase.text = p.baseUrl; eProto.currentText = p.protocol
+                                            eBase.text = p.baseUrl; root.setCombo(eProto, p.protocol)
                                             eModel.text = p.imageModel; eTimeout.value = p.timeoutSeconds; eKey.text = ""
                                         }
                                     }
@@ -758,6 +829,11 @@ Window {
     }
     Shortcut {
         sequence: "Ctrl+M"
+        enabled: !Lightbox.open && root.view === 0
+        onActivated: root.cycleModel()
+    }
+    Shortcut {
+        sequence: "Ctrl+P"
         enabled: !Lightbox.open && root.view === 0
         onActivated: root.cycleProvider()
     }
