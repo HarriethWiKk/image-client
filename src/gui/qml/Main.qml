@@ -170,14 +170,14 @@ Window {
 
                     GroupBox {
                         Layout.fillWidth: true
-                        label: Text { text: qsTr("连接 · profile + 密钥"); color: root.fgMuted; font.pixelSize: 13 }
+                        label: Text { text: qsTr("连接 · Provider + 密钥"); color: root.fgMuted; font.pixelSize: 13 }
                         ColumnLayout {
                             width: parent.width
                             spacing: 8
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: root.gap
-                                TextField { id: fProfile; Layout.fillWidth: true; text: "default"; placeholderText: qsTr("profile 名") }
+                                TextField { id: fProfile; Layout.fillWidth: true; text: "default"; placeholderText: qsTr("Provider 名") }
                                 TextField { id: fKey; Layout.fillWidth: true; placeholderText: qsTr("API key"); echoMode: TextInput.Password }
                             }
                             RowLayout {
@@ -196,7 +196,7 @@ Window {
                                             root.statusMessage = Profiles.lastError()
                                             return
                                         }
-                                        root.statusMessage = qsTr("已保存 profile")
+                                        root.statusMessage = qsTr("已保存 Provider")
                                     }
                                 }
                             }
@@ -561,12 +561,12 @@ Window {
                     // ---- Profiles ----
                     GroupBox {
                         Layout.fillWidth: true
-                        label: Text { text: qsTr("Profile 管理（多服务商快速切换）"); color: root.fgMuted; font.pixelSize: 13 }
+                        label: Text { text: qsTr("模型供应商 Provider（多服务商快速切换）"); color: root.fgMuted; font.pixelSize: 13 }
                         ColumnLayout {
                             width: parent.width
                             spacing: 8
 
-                            Text { text: qsTr("已有 profile"); color: root.fgMuted; font.pixelSize: 12; visible: Profiles.profiles.length > 0 }
+                            Text { text: qsTr("已有 Provider"); color: root.fgMuted; font.pixelSize: 12; visible: Profiles.profiles.length > 0 }
                             Repeater {
                                 model: Profiles.profiles
                                 delegate: RowLayout {
@@ -602,7 +602,7 @@ Window {
                                 rowSpacing: 6
                                 Layout.fillWidth: true
                                 Label { text: qsTr("名称"); color: root.fgMuted }
-                                TextField { id: eName; Layout.fillWidth: true; placeholderText: qsTr("profile 名") }
+                                TextField { id: eName; Layout.fillWidth: true; placeholderText: qsTr("Provider 名") }
                                 Label { text: qsTr("Base URL"); color: root.fgMuted }
                                 TextField { id: eBase; Layout.fillWidth: true; placeholderText: "https://api.openai.com" }
                                 Label { text: qsTr("协议"); color: root.fgMuted }
@@ -618,7 +618,7 @@ Window {
                                 Layout.fillWidth: true
                                 spacing: root.gap
                                 Button {
-                                    text: root.editingName.length > 0 ? qsTr("保存修改") : qsTr("新增 profile")
+                                    text: root.editingName.length > 0 ? qsTr("保存修改") : qsTr("新增 Provider")
                                     enabled: eName.text.length > 0 && eBase.text.length > 0
                                     onClicked: {
                                         if (!Profiles.addProfile(eName.text, eBase.text, eProto.currentText, eModel.text, eTimeout.value)) {

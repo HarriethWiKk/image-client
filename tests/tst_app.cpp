@@ -133,6 +133,7 @@ private slots:
     void profileControllerInvokables();
     void profileControllerListAndDetail();
     void settingsControllerPersistence();
+    void settingsApplyRetentionDeletesAssetFiles();
     void settingsControllerRetentionPrunes();
     void lightboxControllerStateMachine();
 };
@@ -653,6 +654,45 @@ void TstApp::settingsControllerPersistence()
         QCOMPARE(reopened.trustedHosts(), QStringList({QStringLiteral("gw.internal")}));
         QCOMPARE(SettingsController::storedTrustedHosts(), QStringList({QStringLiteral("gw.internal")}));
     }
+}
+
+void TstApp::settingsApplyRetentionDeletesAssetFiles()
+{
+    // The "立即清理" button's full path: pruneToLimits drops rows AND SettingsController
+    // deletes the reported assets from disk. Prove a real result file actually goes away.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    QVERIFY(backend.database()->createJob(makeJob(QStringLiteral("keep"), 10), &error));
+
+    const oic::store::AssetWriteResult wr =
+        backend.assetStore()->write(QStringLiteral("keep"), QStringLiteral("a1"), QStringLiteral("image/png"), fakePng(40));
+    QVERIFY2(wr.ok(), qPrintable(wr.error));
+    oic::store::Asset asset;
+    asset.id = QStringLiteral("a1");
+    asset.jobId = QStringLiteral("keep");
+    asset.filename = QStringLiteral("a1.png");
+    asset.relPath = wr.relPath;
+    asset.bytes = 40;
+    asset.mime = QStringLiteral("image/png");
+    asset.role = QStringLiteral("result");
+    asset.createdAt = 10;
+    QVERIFY(backend.database()->addAsset(asset, &error));
+
+    const QString absFile = QDir(paths.assets).filePath(wr.relPath);
+    QVERIFY2(QFile::exists(absFile), qPrintable(absFile));  // the file really landed on disk first
+
+    SettingsController settings(&backend);
+    settings.setRetentionRows(0);  // drop every live, unpinned row (pinned would survive)
+    settings.setRetentionBytes(0);
+    QCOMPARE(settings.applyRetention(), 1);
+
+    QVERIFY2(!QFile::exists(absFile), "applyRetention must delete the pruned asset from disk");
+    QVERIFY(backend.database()->assetsForJob(QStringLiteral("keep"), &error).isEmpty());
 }
 
 void TstApp::settingsControllerRetentionPrunes()

@@ -129,6 +129,18 @@ bool ProfileController::setCredential(const QString &name, const QString &key)
     QString error;
     const bool ok = saveCredential(name, key, &error);
     m_lastError = error;
+    if (ok)
+        refresh();  // the list's hasCredential badge must re-sync immediately, not only on addProfile
+    return ok;
+}
+
+bool ProfileController::deleteCredential(const QString &name)
+{
+    QString error;
+    const bool ok = eraseCredential(name, &error);
+    m_lastError = error;
+    if (ok)
+        refresh();
     return ok;
 }
 
@@ -141,14 +153,6 @@ bool ProfileController::removeProfileByName(const QString &name)
 {
     QString error;
     const bool ok = removeProfile(name, &error);
-    m_lastError = error;
-    return ok;
-}
-
-bool ProfileController::deleteCredential(const QString &name)
-{
-    QString error;
-    const bool ok = eraseCredential(name, &error);
     m_lastError = error;
     return ok;
 }
