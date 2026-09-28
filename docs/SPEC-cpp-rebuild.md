@@ -508,6 +508,8 @@ image-client://capabilities  ·  /profiles  ·  /jobs  ·  /jobs/{job_id}  ·  /
 
 `.github/workflows/ci.yml` 的 "Package and measure bundle" 步骤用同一组 windeployqt 参数在 CI 上重算这两个数，写进 job summary，并在超过 **60 MB** 时让作业失败。所以上面三项裁剪落地时，这里应当观察到下降而不是上升；若观察到上升，说明部署目录混进了多余东西（最常见的来源是 debug 版 DLL 或 qmltooling）。
 
+**GUI-C 实测（2026-09-28）**：给生成视图加原生文件对话框（`import QtQuick.Dialogs`）后，windeployqt 把**整套 QtQuick.Controls 样式**都拖了进来（Dialog 的 quickimpl 依赖 Controls），bundle 从 GUI-B 的水平涨到 **62.4 MB**，越过 60 MB 闸——CI run #5 正是栽在 "Package and measure bundle"（Build/Test 全过）。应用运行期已 `QQuickStyle::setStyle("Basic")` 钉死，Fluent/Imagine/Material/Fusion/Universal 这些样式 DLL 是死重。按本节 §11.1 既有"只留 `QtQuick/Controls/Basic`"的裁剪方向，在 Package 步骤 windeployqt 之后删掉这几组未用样式（本地实测：62.44 → **55.91 MB**，1342 文件，且裁剪后的 exe offscreen 加载仍无 QML 错）。这不是放宽闸值，而是落实文档里早已写明的裁剪项。
+
 ### 11.2 双二进制的体积红利（实测确认，2026-09-27 复测）
 
 扫 PE 导入表（手写解析，本机无 `dumpbin` 可用路径）：

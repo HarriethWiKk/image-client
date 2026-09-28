@@ -71,6 +71,23 @@ jobs:
             --qmldir src\gui\qml (Join-Path $stage 'ImageClient.exe')
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::windeployqt failed"; exit 1 }
 
+          # SPEC §11.1: we pin the Basic Controls style (QQuickStyle::setStyle("Basic")), so only
+          # QtQuick/Controls/Basic should ship -- but windeployqt copies every style, and importing
+          # QtQuick.Dialogs (GUI-C file picker) drags the whole Controls set in, tipping the bundle
+          # from ~43 MB to 62.4 MB and past the 60 MB gate. Drop the unused style runtimes; the app
+          # and the Dialog both render with Basic, so nothing references these.
+          $unusedStyles = @(
+            'Qt6QuickControls2Fusion.dll',        'Qt6QuickControls2FusionStyleImpl.dll',
+            'Qt6QuickControls2Imagine.dll',       'Qt6QuickControls2ImagineStyleImpl.dll',
+            'Qt6QuickControls2Material.dll',      'Qt6QuickControls2MaterialStyleImpl.dll',
+            'Qt6QuickControls2Universal.dll',     'Qt6QuickControls2UniversalStyleImpl.dll',
+            'Qt6QuickControls2FluentWinUI3StyleImpl.dll'
+          )
+          foreach ($f in $unusedStyles) {
+            $p = Join-Path $stage $f
+            if (Test-Path $p) { Remove-Item -Force $p }
+          }
+
           $items = Get-ChildItem -Path $stage -Recurse -File
           $bytes = ($items | Measure-Object -Property Length -Sum).Sum
           $top = $items | Sort-Object Length -Descending | Select-Object -First 8
