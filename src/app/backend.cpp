@@ -2,6 +2,9 @@
 // Copyright 2026 HarriethWiKk
 #include "oic/app/backend.h"
 
+#include "oic/app/settingscontroller.h"
+#include "oic/net/transport.h"
+
 namespace oic::app {
 
 namespace {
@@ -23,8 +26,10 @@ bool Backend::init(QString *error)
             *error = paths.error;
         return false;
     }
+    oic::net::Transport::Settings transport;
+    transport.trustedHosts = SettingsController::storedTrustedHosts();
     const oic::jobs::JobDeps deps =
-        oic::jobs::makeDefaultDeps(paths.database, paths.assets, kDefaultAssetQuotaBytes);
+        oic::jobs::makeDefaultDeps(paths.database, paths.assets, kDefaultAssetQuotaBytes, transport);
     return initWithPaths(paths, deps, error);
 }
 

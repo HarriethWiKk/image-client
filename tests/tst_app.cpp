@@ -5,6 +5,7 @@
 // Credential Manager), AssetImageProvider SPEC 6.4 decode safety, and the QML-facing
 // controllers over a temp store.
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -12,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -129,6 +131,8 @@ private slots:
     void generateEditWithoutReferenceFails();
     void jobControllerWrapperSurfacesError();
     void profileControllerInvokables();
+    void profileControllerListAndDetail();
+    void settingsControllerPersistence();
     void settingsControllerRetentionPrunes();
     void lightboxControllerStateMachine();
 };
@@ -584,6 +588,71 @@ void TstApp::retryRestoresEditReferences()
     }
     QVERIFY2(sawReference, "retry of an edit job must carry its reference through");
     QVERIFY2(sawResult, "retried job should have produced a result");
+}
+
+void TstApp::profileControllerListAndDetail()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.saveProfile(QStringLiteral("svc"), QStringLiteral("https://gw.example.com/v1"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300, &error));
+
+    QVERIFY(profiles.protocols().contains(QStringLiteral("openai")));
+    QVERIFY(profiles.protocols().contains(QStringLiteral("grok")));
+    QVERIFY(profiles.protocols().contains(QStringLiteral("gemini")));
+
+    const QVariantMap detail = profiles.profileDetail(QStringLiteral("svc"));
+    QCOMPARE(detail.value(QStringLiteral("name")).toString(), QStringLiteral("svc"));
+    QCOMPARE(detail.value(QStringLiteral("baseUrl")).toString(), QStringLiteral("https://gw.example.com/v1"));
+    QCOMPARE(detail.value(QStringLiteral("imageModel")).toString(), QStringLiteral("gpt-image-2"));
+    QCOMPARE(detail.value(QStringLiteral("timeoutSeconds")).toInt(), 300);
+    // No key written -> hasCredential false (a read, not a Credential Manager write).
+    QCOMPARE(detail.value(QStringLiteral("hasCredential")).toBool(), false);
+
+    const QVariantList list = profiles.profilesList();
+    QCOMPARE(list.size(), 1);
+    QCOMPARE(list.at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("svc"));
+
+    QVERIFY(profiles.removeProfileByName(QStringLiteral("svc")));
+    QVERIFY(profiles.profilesList().isEmpty());
+}
+
+void TstApp::settingsControllerPersistence()
+{
+    // Settings are persisted via QSettings; drive a real ini scope (not the registry) so the
+    // round-trip is deterministic and isolated.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QCoreApplication::setOrganizationName(QStringLiteral("oic-test"));
+    QCoreApplication::setApplicationName(QStringLiteral("oic-test"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+    // dir is a fresh QTemporaryDir -> the scoped ini starts empty.
+
+    {
+        SettingsController settings(nullptr);  // theme/retention/trustedHosts need no backend
+        QCOMPARE(settings.themeName(), QStringLiteral("dark"));  // default
+        settings.setThemeName(QStringLiteral("light"));
+        settings.setRetentionRows(42);
+        settings.setRetentionBytes(123456);
+        settings.addTrustedHost(QStringLiteral("  GW.Internal  "));
+        settings.addTrustedHost(QStringLiteral("gw.internal"));  // deduped, lower-cased
+    }
+
+    {
+        SettingsController reopened(nullptr);
+        QCOMPARE(reopened.themeName(), QStringLiteral("light"));
+        QCOMPARE(reopened.retentionRows(), 42);
+        QCOMPARE(reopened.retentionBytes(), qint64(123456));
+        QCOMPARE(reopened.trustedHosts(), QStringList({QStringLiteral("gw.internal")}));
+        QCOMPARE(SettingsController::storedTrustedHosts(), QStringList({QStringLiteral("gw.internal")}));
+    }
 }
 
 void TstApp::settingsControllerRetentionPrunes()

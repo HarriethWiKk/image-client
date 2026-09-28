@@ -19,6 +19,10 @@ class SettingsController : public QObject {
     Q_PROPERTY(qint64 retentionBytes READ retentionBytes WRITE setRetentionBytes NOTIFY changed)
     Q_PROPERTY(qint64 usedBytes READ usedBytes NOTIFY changed)
     Q_PROPERTY(QString themeName READ themeName WRITE setThemeName NOTIFY changed)
+    // Extra hostnames exempt from the SSRF non-global-address rule (a private/LAN gateway the
+    // user trusts -- SPEC 8.3). Persisted; Backend seeds its transport from them at startup, so
+    // edits here take effect on the next launch (the transport is built once, with the pool).
+    Q_PROPERTY(QStringList trustedHosts READ trustedHosts WRITE setTrustedHosts NOTIFY changed)
 public:
     explicit SettingsController(Backend *backend, QObject *parent = nullptr);
 
@@ -29,17 +33,29 @@ public:
     qint64 usedBytes() const;
     QString themeName() const;
     void setThemeName(const QString &name);
+    QStringList trustedHosts() const;
+    void setTrustedHosts(const QStringList &hosts);
 
     Q_INVOKABLE int applyRetention();  // returns the number of jobs dropped
+    Q_INVOKABLE void addTrustedHost(const QString &host);
+    Q_INVOKABLE void removeTrustedHost(const QString &host);
+
+    // Read the persisted trusted-host list without constructing a controller (used by
+    // Backend::init to seed the transport).
+    static QStringList storedTrustedHosts();
 
 Q_SIGNALS:
     void changed();
 
 private:
+    void load();
+    void save() const;
+
     Backend *m_backend;
     int m_retentionRows = 500;                                // SPEC 6.2 suggested default
     qint64 m_retentionBytes = 2LL * 1024 * 1024 * 1024;       // 2 GiB
     QString m_themeName = QStringLiteral("dark");
+    QStringList m_trustedHosts;
 };
 
 }  // namespace oic::app

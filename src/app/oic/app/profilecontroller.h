@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariant>
 
 #include "oic/store/database.h"
 
@@ -43,6 +44,14 @@ public:
     Q_INVOKABLE bool setCredential(const QString &name, const QString &key);
     Q_INVOKABLE QStringList profileNames() const { return names(); }
     Q_INVOKABLE QString lastError() const { return m_lastError; }
+    Q_INVOKABLE QStringList protocols() const;
+    Q_INVOKABLE bool removeProfileByName(const QString &name);
+    Q_INVOKABLE bool deleteCredential(const QString &name);
+    // Per-profile field map for the settings view: name / baseUrl / protocol / imageModel /
+    // timeoutSeconds / hasCredential. Editing a profile re-uses addProfile + setCredential.
+    Q_INVOKABLE QVariantMap profileDetail(const QString &name) const;
+    Q_INVOKABLE QVariantList profilesList() const;
+    Q_INVOKABLE bool hasCredential(const QString &name) const;
 
 Q_SIGNALS:
     void changed();

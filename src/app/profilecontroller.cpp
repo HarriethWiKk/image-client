@@ -3,6 +3,7 @@
 #include "oic/app/profilecontroller.h"
 
 #include "oic/app/backend.h"
+#include "oic/protocol/imageprotocol.h"
 #include "oic/secret/credentials.h"
 
 namespace oic::app {
@@ -129,6 +130,61 @@ bool ProfileController::setCredential(const QString &name, const QString &key)
     const bool ok = saveCredential(name, key, &error);
     m_lastError = error;
     return ok;
+}
+
+QStringList ProfileController::protocols() const
+{
+    return oic::protocol::protocolValues();
+}
+
+bool ProfileController::removeProfileByName(const QString &name)
+{
+    QString error;
+    const bool ok = removeProfile(name, &error);
+    m_lastError = error;
+    return ok;
+}
+
+bool ProfileController::deleteCredential(const QString &name)
+{
+    QString error;
+    const bool ok = eraseCredential(name, &error);
+    m_lastError = error;
+    return ok;
+}
+
+bool ProfileController::hasCredential(const QString &name) const
+{
+    QString targetError;
+    const QString target = oic::secret::targetNameFor(name, &targetError);
+    if (targetError.isEmpty() && m_backend != nullptr) {
+        QString readError;
+        bool absent = true;
+        const QByteArray secret = oic::secret::readSecret(target, &readError, &absent);
+        return !absent && !secret.isEmpty();
+    }
+    return false;
+}
+
+QVariantMap ProfileController::profileDetail(const QString &name) const
+{
+    const oic::store::Profile profile = this->profile(name);
+    QVariantMap map;
+    map.insert(QStringLiteral("name"), profile.name);
+    map.insert(QStringLiteral("baseUrl"), profile.baseUrl);
+    map.insert(QStringLiteral("protocol"), profile.protocol);
+    map.insert(QStringLiteral("imageModel"), profile.imageModel);
+    map.insert(QStringLiteral("timeoutSeconds"), profile.timeoutSeconds);
+    map.insert(QStringLiteral("hasCredential"), hasCredential(name));
+    return map;
+}
+
+QVariantList ProfileController::profilesList() const
+{
+    QVariantList list;
+    for (const oic::store::Profile &profile : m_profiles)
+        list.append(profileDetail(profile.name));
+    return list;
 }
 
 }  // namespace oic::app
