@@ -121,6 +121,9 @@ private slots:
     void historyModelRolesPinAndDelete();
     void jobControllerGenerateFinishes();
     void jobControllerEditPersistsReferenceAssets();
+    void historyModelPagination();
+    void retryResubmitsGenerateJob();
+    void retryRestoresEditReferences();
     void addReferenceRejectsNonImage();
     void generateEditWithoutReferenceFails();
     void jobControllerWrapperSurfacesError();
@@ -415,6 +418,150 @@ void TstApp::generateEditWithoutReferenceFails()
                                          QStringLiteral("openai"));
     QVERIFY2(id.isEmpty(), "an edit submit with no reference must fail");
     QVERIFY2(jobs.lastError().contains(QString::fromUtf8("参考图")), qPrintable(jobs.lastError()));
+}
+
+void TstApp::historyModelPagination()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    for (int i = 1; i <= 6; ++i)
+        QVERIFY(backend.database()->createJob(makeJob(QStringLiteral("j%1").arg(i), i * 10), &error));
+
+    HistoryModel model(&backend);
+    model.refresh(4);  // page size 4
+    QCOMPARE(model.count(), 4);
+    QCOMPARE(model.hasMore(), true);
+    model.loadMore();
+    QCOMPARE(model.count(), 6);
+    QCOMPARE(model.hasMore(), false);  // second page was short -> no more
+    // These jobs have no result assets, so the lightbox list for a row is empty.
+    QVERIFY(model.resultRelPaths(0).isEmpty());
+}
+
+void TstApp::retryResubmitsGenerateJob()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, imageDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.saveProfile(QStringLiteral("p1"), QStringLiteral("https://api.example.com"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300, &error));
+
+    oic::store::Job failed;
+    failed.id = QStringLiteral("src1");
+    failed.createdAt = 10;
+    failed.updatedAt = 10;
+    failed.mode = QStringLiteral("generate");
+    failed.protocol = QStringLiteral("openai");
+    failed.profile = QStringLiteral("p1");
+    failed.model = QStringLiteral("gpt-image-2");
+    failed.prompt = QStringLiteral("a cat");
+    failed.size = QStringLiteral("1024x1024");
+    failed.n = 1;
+    failed.status = QStringLiteral("failed");
+    failed.error = QStringLiteral("上游超时");
+    QVERIFY(backend.database()->createJob(failed, &error));
+
+    JobController jobs(&backend);
+    QSignalSpy finished(&jobs, &JobController::jobFinished);
+    QVERIFY(finished.isValid());
+    const QString id = jobs.retryFromHistory(QStringLiteral("src1"));
+    QVERIFY2(!id.isEmpty(), qPrintable(jobs.lastError()));
+
+    QString status;
+    for (int i = 0; i < 100 && status.isEmpty(); ++i) {
+        QTest::qWait(20);
+        for (const QList<QVariant> &args : finished) {
+            if (args.at(0).toString() == id) {
+                status = args.at(1).toString();
+                break;
+            }
+        }
+    }
+    QVERIFY2(status == QLatin1String("succeeded"), qPrintable(QStringLiteral("status=%1").arg(status)));
+}
+
+void TstApp::retryRestoresEditReferences()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, imageDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.saveProfile(QStringLiteral("p1"), QStringLiteral("https://api.example.com"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300, &error));
+
+    oic::store::Job edit;
+    edit.id = QStringLiteral("ed1");
+    edit.createdAt = 10;
+    edit.updatedAt = 10;
+    edit.mode = QStringLiteral("edit");
+    edit.protocol = QStringLiteral("openai");
+    edit.profile = QStringLiteral("p1");
+    edit.model = QStringLiteral("gpt-image-2");
+    edit.prompt = QStringLiteral("make it a watercolor");
+    edit.size = QStringLiteral("1024x1024");
+    edit.n = 1;
+    edit.status = QStringLiteral("failed");
+    QVERIFY(backend.database()->createJob(edit, &error));
+
+    // A reference asset persisted under the original edit job (as GUI-C's runJob does).
+    const QByteArray png = fakePng(60);
+    const oic::store::AssetWriteResult wr = backend.assetStore()->write(QStringLiteral("ed1"), QStringLiteral("ref-1"),
+                                                                        QStringLiteral("image/png"), png);
+    QVERIFY2(wr.ok(), qPrintable(wr.error));
+    oic::store::Asset refAsset;
+    refAsset.id = QStringLiteral("ref-1");
+    refAsset.jobId = QStringLiteral("ed1");
+    refAsset.filename = QStringLiteral("ref.png");
+    refAsset.relPath = wr.relPath;
+    refAsset.bytes = png.size();
+    refAsset.mime = QStringLiteral("image/png");
+    refAsset.role = QStringLiteral("reference");
+    refAsset.createdAt = 10;
+    QVERIFY(backend.database()->addAsset(refAsset, &error));
+
+    JobController jobs(&backend);
+    QSignalSpy finished(&jobs, &JobController::jobFinished);
+    QVERIFY(finished.isValid());
+    const QString id = jobs.retryFromHistory(QStringLiteral("ed1"));
+    QVERIFY2(!id.isEmpty(), qPrintable(jobs.lastError()));
+
+    QString status;
+    for (int i = 0; i < 100 && status.isEmpty(); ++i) {
+        QTest::qWait(20);
+        for (const QList<QVariant> &args : finished) {
+            if (args.at(0).toString() == id) {
+                status = args.at(1).toString();
+                break;
+            }
+        }
+    }
+    QVERIFY2(status == QLatin1String("succeeded"), qPrintable(QStringLiteral("status=%1").arg(status)));
+
+    // The restored reference flowed through runJob and was re-persisted on the new job.
+    bool sawReference = false;
+    bool sawResult = false;
+    for (const oic::store::Asset &asset : backend.database()->assetsForJob(id, &error)) {
+        if (asset.role == QLatin1String("reference"))
+            sawReference = true;
+        if (asset.role == QLatin1String("result"))
+            sawResult = true;
+    }
+    QVERIFY2(sawReference, "retry of an edit job must carry its reference through");
+    QVERIFY2(sawResult, "retried job should have produced a result");
 }
 
 void TstApp::settingsControllerRetentionPrunes()

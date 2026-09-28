@@ -277,6 +277,57 @@ QString JobController::generateEdit(const QString &profileName, const QString &m
     return jobId;
 }
 
+QString JobController::retryFromHistory(const QString &jobId)
+{
+    m_lastError.clear();
+    if (m_backend == nullptr || m_backend->database() == nullptr || m_backend->jobs() == nullptr) {
+        m_lastError = QStringLiteral("后端未就绪");
+        return {};
+    }
+
+    bool found = false;
+    QString readError;
+    const oic::store::Job job = m_backend->database()->job(jobId, &found, &readError);
+    if (!found) {
+        m_lastError = readError.isEmpty() ? QStringLiteral("任务 %1 不存在").arg(jobId) : readError;
+        return {};
+    }
+
+    const bool isEdit = (job.mode == QLatin1String("edit"));
+    QList<PendingReference> references;
+    if (isEdit) {
+        // Restore the reference images that were persisted with the job (GUI-C role='reference'
+        // assets) so re-running a past 图生图 does not force the user to re-attach them.
+        QString assetError;
+        const QList<oic::store::Asset> assets = m_backend->database()->assetsForJob(jobId, &assetError);
+        const QString root = m_backend->assetsRoot();
+        for (const oic::store::Asset &asset : assets) {
+            if (asset.role != QLatin1String("reference"))
+                continue;
+            QFile file(root + QLatin1Char('/') + asset.relPath);
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            const QByteArray bytes = file.readAll();
+            const QString mime = asset.mime.isEmpty() ? QStringLiteral("image/png") : asset.mime;
+            PendingReference ref;
+            ref.name = asset.filename;
+            ref.mime = mime;
+            ref.dataUrl = oic::protocol::dataUrlFromBytes(bytes, mime);
+            references.append(ref);
+        }
+        if (references.isEmpty()) {  // an edit job with no restorable input cannot be replayed
+            m_lastError = QStringLiteral("找不到该任务的参考图，无法重试图生图");
+            return {};
+        }
+    }
+
+    QString error;
+    const QString newId = submitImage(job.profile, job.model, job.prompt, job.size, job.n, job.protocol, references,
+                                      /*editMode=*/isEdit, &error);
+    m_lastError = error;
+    return newId;
+}
+
 bool JobController::cancel(const QString &jobId)
 {
     return m_backend != nullptr && m_backend->jobs() != nullptr && m_backend->jobs()->cancel(jobId);

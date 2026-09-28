@@ -67,10 +67,35 @@ void HistoryModel::refresh(int limit, int offset)
         return;
     QString error;
     beginResetModel();
+    m_limit = limit;
     m_jobs = m_backend->database()->listJobs(limit, offset, false, &error);
+    m_offset = offset + m_jobs.size();
+    m_hasMore = (m_jobs.size() >= limit);  // a full page suggests older rows remain
     m_thumbnails.clear();
     reloadThumbnails();
     endResetModel();
+    emit countChanged();
+}
+
+void HistoryModel::loadMore()
+{
+    if (m_backend == nullptr || m_backend->database() == nullptr || !m_hasMore)
+        return;
+    QString error;
+    const QList<oic::store::Job> next = m_backend->database()->listJobs(m_limit, m_offset, false, &error);
+    if (next.isEmpty()) {
+        m_hasMore = false;
+        emit countChanged();
+        return;
+    }
+    const int first = m_jobs.size();
+    beginInsertRows(QModelIndex(), first, first + next.size() - 1);
+    for (const oic::store::Job &job : next)
+        m_jobs.append(job);
+    reloadThumbnails();  // recomputes for the whole set; the row count stays well under the retention cap
+    m_offset += next.size();
+    m_hasMore = (next.size() >= m_limit);
+    endInsertRows();
     emit countChanged();
 }
 
@@ -122,6 +147,20 @@ bool HistoryModel::removeAt(int row)
         return false;
     refresh();
     return true;
+}
+
+QStringList HistoryModel::resultRelPaths(int row) const
+{
+    QStringList relPaths;
+    if (m_backend == nullptr || m_backend->database() == nullptr || row < 0 || row >= m_jobs.size())
+        return relPaths;
+    QString error;
+    const QList<oic::store::Asset> assets = m_backend->database()->assetsForJob(m_jobs.at(row).id, &error);
+    for (const oic::store::Asset &asset : assets) {
+        if (asset.role == QLatin1String("result"))
+            relPaths.append(asset.relPath);
+    }
+    return relPaths;
 }
 
 }  // namespace oic::app

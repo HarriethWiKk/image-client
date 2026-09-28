@@ -52,6 +52,11 @@ public:
     QStringList referenceSources() const;
     Q_INVOKABLE QString generateEdit(const QString &profileName, const QString &model, const QString &prompt,
                                      const QString &size, int n, const QString &protocolHint = QString());
+    // Re-run a persisted history job: rebuild the request from its stored row, and for an edit
+    // job restore its reference images from the role='reference' assets saved under the job, so a
+    // past 图生图 can be re-submitted without the user re-attaching references. Returns the new
+    // job id, or empty + lastError (profile gone, references missing, submit rejected).
+    Q_INVOKABLE QString retryFromHistory(const QString &jobId);
 
 Q_SIGNALS:
     void jobStarted(const QString &jobId);

@@ -51,6 +51,27 @@ Window {
         return urls
     }
 
+    function relPathsToUrls(rels) {
+        var urls = []
+        for (var i = 0; i < rels.length; ++i)
+            urls.push(relToUrl(rels[i]))
+        return urls
+    }
+
+    function statusLabel(s) {
+        if (s === "succeeded") return qsTr("成功")
+        if (s === "failed") return qsTr("失败")
+        if (s === "cancelled") return qsTr("已取消")
+        if (s === "running") return qsTr("生成中")
+        if (s === "queued") return qsTr("排队")
+        return s
+    }
+    function statusColor(s) {
+        if (s === "succeeded") return root.accent
+        if (s === "failed") return root.danger
+        return root.fgMuted
+    }
+
     ListModel { id: results }
 
     // Stage one source (from drop or file dialog). The controller emits referencesChanged() on
@@ -81,6 +102,8 @@ Window {
             } else {
                 root.statusMessage = (status === "cancelled") ? qsTr("任务已取消") : error
             }
+            // Keep the persisted-history view current (a finished or retried job now has a row).
+            History.refresh()
         }
     }
 
@@ -127,6 +150,7 @@ Window {
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.view
+            onCurrentIndexChanged: if (currentIndex === 1) History.refresh()
 
             // ---------------- Generate ----------------
             ScrollView {
@@ -380,9 +404,131 @@ Window {
                 }
             }
 
-            // ---------------- History / Settings (GUI-E / GUI-F) ----------------
+            // ---------------- History (GUI-E) ----------------
             Item {
-                Label { anchors.centerIn: parent; text: qsTr("历史视图 · 待 GUI-E"); color: root.fgMuted }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 8
+
+                    Label { text: qsTr("历史 · 跨重启保留（sqlite）"); color: root.fgMuted; font.bold: true }
+                    Label {
+                        visible: History.count === 0
+                        text: qsTr("还没有历史 · 去「生成」页出图")
+                        color: root.fgMuted
+                    }
+
+                    GridView {
+                        id: histGrid
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        cellWidth: 224
+                        cellHeight: 260
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: History
+                        ScrollIndicator.vertical: ScrollIndicator { }
+                        onAtYEndChanged: if (atYEnd && History.hasMore) History.loadMore()
+
+                        delegate: Item {
+                            width: histGrid.cellWidth
+                            height: histGrid.cellHeight
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                radius: root.radius
+                                color: root.surface
+                                border.color: model.pinned ? root.accent : root.borderColor
+                                border.width: model.pinned ? 2 : 1
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 4
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 150
+                                        radius: 6
+                                        color: root.bg
+                                        border.color: root.borderColor
+                                        clip: true
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 2
+                                            source: model.thumbnail ? (root.relToUrl(model.thumbnail)) : ""
+                                            fillMode: Image.PreserveAspectFit
+                                            asynchronous: true
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: !model.thumbnail
+                                            text: root.statusLabel(model.status || "")
+                                            color: root.statusColor(model.status || "")
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: !!model.thumbnail
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                Lightbox.model = root.relPathsToUrls(History.resultRelPaths(index))
+                                                Lightbox.openAt(0)
+                                            }
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Text { text: root.statusLabel(model.status || ""); color: root.statusColor(model.status || ""); font.pixelSize: 12 }
+                                        Text { text: model.mode || ""; color: root.fgMuted; font.pixelSize: 11 }
+                                        Item { Layout.fillWidth: true }
+                                        Text { visible: !!model.pinned; text: "★"; color: root.accent; font.pixelSize: 12 }
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: model.prompt || ""
+                                        color: root.fg
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 2
+                                        wrapMode: Text.Wrap
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        visible: model.status === "failed" && !!model.error && model.error.length > 0
+                                        text: model.error || ""
+                                        color: root.danger
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        font.pixelSize: 11
+                                    }
+                                    Item { Layout.fillHeight: true }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Button {
+                                            text: model.pinned ? qsTr("取消置顶") : qsTr("置顶")
+                                            onClicked: History.pin(index, !model.pinned)
+                                        }
+                                        Button {
+                                            text: qsTr("重试")
+                                            onClicked: {
+                                                if (Jobs.retryFromHistory(model.jobId) === "") {
+                                                    var e = Jobs.lastError()
+                                                    if (e.length > 0) root.statusMessage = e
+                                                }
+                                            }
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                        Button { text: qsTr("删除"); onClicked: History.removeAt(index) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Item {
                 Label { anchors.centerIn: parent; text: qsTr("设置视图 · 待 GUI-F"); color: root.fgMuted }
