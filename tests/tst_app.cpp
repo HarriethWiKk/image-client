@@ -21,6 +21,7 @@
 #include "oic/app/backend.h"
 #include "oic/app/historymodel.h"
 #include "oic/app/jobcontroller.h"
+#include "oic/app/lightboxcontroller.h"
 #include "oic/app/profilecontroller.h"
 #include "oic/app/settingscontroller.h"
 #include "oic/jobs/executor.h"
@@ -125,6 +126,7 @@ private slots:
     void jobControllerWrapperSurfacesError();
     void profileControllerInvokables();
     void settingsControllerRetentionPrunes();
+    void lightboxControllerStateMachine();
 };
 
 void TstApp::backendInitWithFakeDeps()
@@ -471,6 +473,83 @@ void TstApp::profileControllerInvokables()
     QVERIFY(!profiles.addProfile(QStringLiteral("-bad"), QStringLiteral("https://api.example.com"),
                                   QStringLiteral("openai"), QStringLiteral(""), 0));
     QVERIFY(!profiles.lastError().isEmpty());
+}
+
+void TstApp::lightboxControllerStateMachine()
+{
+    oic::app::LightboxController lb;
+    QSignalSpy changed(&lb, &oic::app::LightboxController::changed);
+    QVERIFY(changed.isValid());
+
+    // Empty model: openAt refuses rather than showing a phantom index.
+    lb.openAt(0);
+    QVERIFY(!lb.isOpen());
+
+    lb.setModel({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c")});
+    QCOMPARE(lb.count(), 3);
+    QCOMPARE(lb.canCompare(), true);
+
+    lb.openAt(1);
+    QVERIFY(lb.isOpen());
+    QCOMPARE(lb.currentIndex(), 1);
+    QCOMPARE(lb.zoom(), 1.0);
+    QCOMPARE(lb.isCompare(), false);
+
+    // Navigation wraps in both directions (SPEC 9.1 keyboard history nav).
+    lb.next();
+    QCOMPARE(lb.currentIndex(), 2);
+    lb.next();
+    QCOMPARE(lb.currentIndex(), 0);
+    lb.prev();
+    QCOMPARE(lb.currentIndex(), 2);
+
+    // openAt clamps out-of-range indices.
+    lb.openAt(99);
+    QCOMPARE(lb.currentIndex(), 2);
+    lb.openAt(-5);
+    QCOMPARE(lb.currentIndex(), 0);
+
+    // Zoom clamps to [1, 8] and a step resets it to 1.
+    for (int i = 0; i < 40; ++i)
+        lb.zoomIn();
+    QVERIFY(lb.zoom() <= 8.0 + 1e-9);
+    QVERIFY(lb.zoom() > 1.0);
+    lb.resetZoom();
+    QCOMPARE(lb.zoom(), 1.0);
+    for (int i = 0; i < 40; ++i)
+        lb.zoomOut();
+    QCOMPARE(lb.zoom(), 1.0);  // never below 1x
+    lb.zoomIn();
+    lb.step(1);
+    QCOMPARE(lb.zoom(), 1.0);  // stepping a new image drops zoom
+
+    // Compare needs >= 2 images; toggling pairs currentIndex with the next one.
+    lb.openAt(0);
+    lb.toggleCompare();
+    QVERIFY(lb.isCompare());
+    QCOMPARE(lb.compareIndex(), 1);
+    lb.toggleCompare();
+    QVERIFY(!lb.isCompare());
+    QCOMPARE(lb.compareIndex(), -1);
+
+    // A single-image set cannot compare.
+    lb.setModel({QStringLiteral("only")});
+    lb.openAt(0);
+    QCOMPARE(lb.canCompare(), false);
+    lb.toggleCompare();
+    QVERIFY(!lb.isCompare());
+
+    // Close resets transient state.
+    lb.setModel({QStringLiteral("a"), QStringLiteral("b")});
+    lb.openAt(0);
+    lb.zoomIn();
+    lb.close();
+    QVERIFY(!lb.isOpen());
+    QCOMPARE(lb.zoom(), 1.0);
+    QVERIFY(!lb.isCompare());
+
+    // Every mutation notified (the view binds to `changed`).
+    QVERIFY(changed.count() >= 20);
 }
 
 QTEST_GUILESS_MAIN(TstApp)

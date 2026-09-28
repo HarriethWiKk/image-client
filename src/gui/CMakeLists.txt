@@ -3,7 +3,7 @@ qt_add_executable(ImageClient WIN32 main.cpp)
 qt_add_qml_module(ImageClient
     URI App
     VERSION 1.0
-    QML_FILES qml/Main.qml
+    QML_FILES qml/Main.qml qml/LightboxOverlay.qml
 )
 
 target_link_libraries(ImageClient PRIVATE

@@ -5,12 +5,14 @@ qt_add_library(oic-app STATIC
     oic/app/profilecontroller.h
     oic/app/jobcontroller.h
     oic/app/settingscontroller.h
+    oic/app/lightboxcontroller.h
     backend.cpp
     assetimageprovider.cpp
     historymodel.cpp
     profilecontroller.cpp
     jobcontroller.cpp
     settingscontroller.cpp
+    lightboxcontroller.cpp
 )
 
 target_include_directories(oic-app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

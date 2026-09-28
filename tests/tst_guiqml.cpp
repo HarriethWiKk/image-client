@@ -19,12 +19,14 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQuickWindow>
 #include <QScopedPointer>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
 
 #include "oic/app/jobcontroller.h"
+#include "oic/app/lightboxcontroller.h"
 
 namespace {
 
@@ -46,6 +48,7 @@ class TstGuiQml : public QObject
 
 private slots:
     void repeaterTracksReferenceSources();
+    void popupOpensWhenControllerOpens();
 };
 
 void TstGuiQml::repeaterTracksReferenceSources()
@@ -113,6 +116,49 @@ void TstGuiQml::repeaterTracksReferenceSources()
     jobs.clearReferences();
     QCoreApplication::processEvents();
     QCOMPARE(repeaterCount(root.data()), 0);
+}
+
+void TstGuiQml::popupOpensWhenControllerOpens()
+{
+    // Proves the overlay-open binding (Popup parented to Overlay.overlay, visible bound to the
+    // controller's `open`) works IN A WINDOW -- exactly the state a thumbnail click puts the app
+    // in. A Popup cannot be instantiated headlessly with a window via QQmlComponent::create()
+    // (no Overlay.overlay), so this mirrors the real LightboxOverlay's bindings inline rather than
+    // loading the file; the file's parse/load is separately covered by the offscreen exe smoke.
+    oic::app::LightboxController lb;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("Lightbox"), &lb);
+    QQmlComponent component(&engine);
+    component.setData(
+        "import QtQuick\n"
+        "import QtQuick.Controls.Basic\n"
+        "Window {\n"
+        "    width: 400; height: 300; visible: true\n"
+        "    Popup {\n"
+        "        objectName: \"pop\"\n"
+        "        parent: Overlay.overlay\n"
+        "        modal: true\n"
+        "        visible: Lightbox.open\n"
+        "        width: parent ? parent.width : 0\n"
+        "        height: parent ? parent.height : 0\n"
+        "    }\n"
+        "}\n",
+        QUrl());
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(!root.isNull());
+    QObject *popup = root->findChild<QObject *>(QStringLiteral("pop"));
+    QVERIFY(popup != nullptr);
+    QVERIFY(!popup->property("visible").toBool());
+
+    lb.setModel({QStringLiteral("a"), QStringLiteral("b")});
+    lb.openAt(0);
+    QCoreApplication::processEvents();
+    QCOMPARE(popup->property("visible").toBool(), true);
+
+    lb.close();
+    QCoreApplication::processEvents();
+    QCOMPARE(popup->property("visible").toBool(), false);
 }
 
 int main(int argc, char *argv[])

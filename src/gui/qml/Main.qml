@@ -43,13 +43,21 @@ Window {
 
     function relToUrl(rel) { return "image://asset/" + rel }
 
+    // Snapshot the current results as the lightbox's navigation set.
+    function collectResultUrls() {
+        var urls = []
+        for (var i = 0; i < results.count; ++i)
+            urls.push(results.get(i).url)
+        return urls
+    }
+
     ListModel { id: results }
 
     // Stage one source (from drop or file dialog). The controller emits referencesChanged() on
     // every mutation and the Repeater binds straight to Jobs.referenceSources, so no manual
     // refresh here -- surface a rejection reason only.
     function stageReference(urlOrPath) {
-        if (Jobs.addReferencePath(urlOrPath).isEmpty()) {
+        if (Jobs.addReferencePath(urlOrPath) === "") {
             var e = Jobs.lastError()
             if (e.length > 0)
                 statusMessage = e
@@ -274,6 +282,13 @@ Window {
                                             fillMode: Image.PreserveAspectFit
                                             asynchronous: true
                                         }
+                                        // Click the reference body to preview it full-size in the lightbox; the ×
+                                        // Button stays declared after it (on top) so removal still wins.
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: { Lightbox.model = Jobs.referenceSources; Lightbox.openAt(index) }
+                                        }
                                         Button {
                                             anchors.top: parent.top
                                             anchors.right: parent.right
@@ -334,7 +349,8 @@ Window {
                                 Layout.preferredHeight: 200
                                 radius: root.radius
                                 color: root.surface
-                                border.color: root.borderColor
+                                border.color: hover.containsMouse ? root.accent : root.borderColor
+                                border.width: hover.containsMouse ? 2 : 1
                                 clip: true
                                 Image {
                                     id: img
@@ -349,6 +365,13 @@ Window {
                                     anchors.centerIn: parent
                                     running: img.status === Image.Loading
                                     visible: running
+                                }
+                                MouseArea {
+                                    id: hover
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: { Lightbox.model = root.collectResultUrls(); Lightbox.openAt(index) }
                                 }
                             }
                         }
@@ -366,4 +389,7 @@ Window {
             }
         }
     }
+
+    // GUI-D lightbox: binds to the Lightbox controller; opens when a result thumbnail is clicked.
+    LightboxOverlay { }
 }

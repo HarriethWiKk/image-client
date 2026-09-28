@@ -51,6 +51,8 @@ set_tests_properties(tst_app PROPERTIES ENVIRONMENT "PATH=${OIC_QT_BIN_DIR};$ENV
 # engine + Repeater that this test drives.
 qt_add_executable(tst_guiqml tst_guiqml.cpp)
 target_link_libraries(tst_guiqml PRIVATE Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick oic-app)
+target_compile_definitions(tst_guiqml PRIVATE
+    OIC_LIGHTBOX_QML="${CMAKE_SOURCE_DIR}/src/gui/qml/LightboxOverlay.qml")
 add_test(NAME tst_guiqml COMMAND tst_guiqml)
 set_tests_properties(tst_guiqml PROPERTIES ENVIRONMENT "PATH=${OIC_QT_BIN_DIR};$ENV{PATH}")
 

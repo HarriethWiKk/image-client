@@ -10,6 +10,7 @@
 #include "oic/app/backend.h"
 #include "oic/app/historymodel.h"
 #include "oic/app/jobcontroller.h"
+#include "oic/app/lightboxcontroller.h"
 #include "oic/app/profilecontroller.h"
 #include "oic/app/settingscontroller.h"
 
@@ -34,6 +35,7 @@ int main(int argc, char *argv[])
     oic::app::HistoryModel history(&backend, &backend);
     oic::app::JobController jobs(&backend, &backend);
     oic::app::SettingsController settings(&backend, &backend);
+    oic::app::LightboxController lightbox(&backend);
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("asset"),
@@ -45,6 +47,7 @@ int main(int argc, char *argv[])
     root->setContextProperty(QStringLiteral("History"), &history);
     root->setContextProperty(QStringLiteral("Jobs"), &jobs);
     root->setContextProperty(QStringLiteral("Settings"), &settings);
+    root->setContextProperty(QStringLiteral("Lightbox"), &lightbox);
 
     engine.loadFromModule("App", "Main");
     if (engine.rootObjects().isEmpty())
