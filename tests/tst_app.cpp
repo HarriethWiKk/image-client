@@ -122,6 +122,7 @@ private slots:
     void jobControllerGenerateFinishes();
     void jobControllerEditPersistsReferenceAssets();
     void historyModelPagination();
+    void historyModelRoleNamesAvoidQmlReserved();
     void retryResubmitsGenerateJob();
     void retryRestoresEditReferences();
     void addReferenceRejectsNonImage();
@@ -441,6 +442,27 @@ void TstApp::historyModelPagination()
     QCOMPARE(model.hasMore(), false);  // second page was short -> no more
     // These jobs have no result assets, so the lightbox list for a row is empty.
     QVERIFY(model.resultRelPaths(0).isEmpty());
+}
+
+void TstApp::historyModelRoleNamesAvoidQmlReserved()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    HistoryModel model(&backend);
+    const QList<QByteArray> names = model.roleNames().values();
+    // "model" and "index" are reserved by QML's delegate scope: using either poisons the whole
+    // role map so every model.<name> resolves undefined (the live bug: black thumbnails + retry
+    // reading an empty jobId). Guard the invariant so it can never come back.
+    QVERIFY2(!names.contains(QByteArrayLiteral("model")), "role name 'model' is reserved by QML");
+    QVERIFY2(!names.contains(QByteArrayLiteral("index")), "role name 'index' is reserved by QML");
+    QVERIFY(names.contains(QByteArrayLiteral("status")));
+    QVERIFY(names.contains(QByteArrayLiteral("jobId")));
+    QVERIFY(names.contains(QByteArrayLiteral("thumbnail")));
 }
 
 void TstApp::retryResubmitsGenerateJob()

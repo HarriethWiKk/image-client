@@ -19,9 +19,12 @@ int HistoryModel::rowCount(const QModelIndex &parent) const
 
 QHash<int, QByteArray> HistoryModel::roleNames() const
 {
+    // "model" and "index" are reserved by QML's delegate scope (QQmlDelegateModel) -- using
+    // them as a role name poisons the entire mapping and makes every `model.<name>` resolve
+    // undefined. The image model field therefore surfaces as "imageModel".
     return {
         {IdRole, "jobId"},         {StatusRole, "status"},   {ModeRole, "mode"},
-        {ModelRole, "model"},      {PromptRole, "prompt"},   {CreatedAtRole, "createdAt"},
+        {ModelRole, "imageModel"}, {PromptRole, "prompt"},   {CreatedAtRole, "createdAt"},
         {UpdatedAtRole, "updatedAt"}, {DurationMsRole, "durationMs"}, {PinnedRole, "pinned"},
         {ErrorRole, "error"},      {EndpointRole, "endpoint"}, {ThumbnailRole, "thumbnail"},
     };

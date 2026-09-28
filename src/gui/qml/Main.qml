@@ -424,7 +424,7 @@ Window {
                         Layout.fillHeight: true
                         clip: true
                         cellWidth: 224
-                        cellHeight: 260
+                        cellHeight: 320
                         boundsBehavior: Flickable.StopAtBounds
                         model: History
                         ScrollIndicator.vertical: ScrollIndicator { }
@@ -507,22 +507,34 @@ Window {
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 6
-                                        Button {
-                                            text: model.pinned ? qsTr("取消置顶") : qsTr("置顶")
+                                        spacing: 4
+                                        ToolButton {
+                                            text: model.pinned ? "★" : "☆"
+                                            hoverEnabled: true
+                                            ToolTip.text: model.pinned ? qsTr("取消置顶") : qsTr("置顶")
+                                            ToolTip.visible: hovered
                                             onClicked: History.pin(index, !model.pinned)
                                         }
-                                        Button {
-                                            text: qsTr("重试")
+                                        ToolButton {
+                                            text: "⟳"
+                                            hoverEnabled: true
+                                            ToolTip.text: qsTr("重试（图生图会还原参考图）")
+                                            ToolTip.visible: hovered
                                             onClicked: {
-                                                if (Jobs.retryFromHistory(model.jobId) === "") {
+                                                if (Jobs.retryFromHistory(model.jobId || "") === "") {
                                                     var e = Jobs.lastError()
                                                     if (e.length > 0) root.statusMessage = e
                                                 }
                                             }
                                         }
                                         Item { Layout.fillWidth: true }
-                                        Button { text: qsTr("删除"); onClicked: History.removeAt(index) }
+                                        ToolButton {
+                                            text: "✕"
+                                            hoverEnabled: true
+                                            ToolTip.text: qsTr("删除")
+                                            ToolTip.visible: hovered
+                                            onClicked: History.removeAt(index)
+                                        }
                                     }
                                 }
                             }
