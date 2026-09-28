@@ -113,6 +113,7 @@ private slots:
     void providerDecodesRealImage();
     void providerHonorsAllocationLimit();
     void providerMissingAndTraversalGivePlaceholder();
+    void providerHonorsRequestedSize();
     void profileControllerCrudDerivesCredentialTarget();
     void historyModelRolesPinAndDelete();
     void jobControllerGenerateFinishes();
@@ -184,6 +185,24 @@ void TstApp::providerMissingAndTraversalGivePlaceholder()
 
     const QImage escape = provider.requestImage(QStringLiteral("../../etc/passwd"), &size, QSize());
     QVERIFY2(escape.size() == QSize(256, 256), "a path-escape id must yield the placeholder, not read outside the root");
+}
+
+void TstApp::providerHonorsRequestedSize()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString rel = QStringLiteral("j1/wide.png");
+    QVERIFY(writePng(QDir(dir.path()).filePath(rel), 200, 100));
+
+    // The provider honours requestedSize by scaling here, and reports the size of what it
+    // returns -- self-consistent (200x100 at 2:1 into 50x50 -> 50x25), so QML never gets a
+    // full-size bitmap for a thumbnail.
+    AssetImageProvider provider(dir.path());
+    QSize size;
+    const QImage image = provider.requestImage(rel, &size, QSize(50, 50));
+    QVERIFY2(image.size() == QSize(50, 25),
+             qPrintable(QStringLiteral("got %1x%2").arg(image.width()).arg(image.height())));
+    QVERIFY(size == QSize(50, 25));
 }
 
 void TstApp::profileControllerCrudDerivesCredentialTarget()

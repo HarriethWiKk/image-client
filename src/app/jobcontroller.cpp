@@ -34,6 +34,11 @@ QString JobController::generate(const QString &profileName, const QString &model
 
     QString profileError;
     const QList<oic::store::Profile> profiles = m_backend->database()->profiles(&profileError);
+    if (!profileError.isEmpty()) {  // a store failure must not be mis-reported as "no such profile"
+        if (error != nullptr)
+            *error = profileError;
+        return {};
+    }
     oic::store::Profile profile;
     bool found = false;
     for (const oic::store::Profile &candidate : profiles) {

@@ -97,6 +97,8 @@ QString HistoryModel::jobIdAt(int row) const
 
 bool HistoryModel::pin(int row, bool pinned)
 {
+    if (m_backend == nullptr)
+        return false;
     const QString id = jobIdAt(row);
     if (id.isEmpty() || m_backend->database() == nullptr)
         return false;
@@ -110,6 +112,8 @@ bool HistoryModel::pin(int row, bool pinned)
 
 bool HistoryModel::removeAt(int row)
 {
+    if (m_backend == nullptr)
+        return false;
     const QString id = jobIdAt(row);
     if (id.isEmpty() || m_backend->database() == nullptr)
         return false;
