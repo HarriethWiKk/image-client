@@ -47,6 +47,13 @@ target_link_libraries(tst_app PRIVATE Qt6::Test oic-app)
 add_test(NAME tst_app COMMAND tst_app)
 set_tests_properties(tst_app PROPERTIES ENVIRONMENT "PATH=${OIC_QT_BIN_DIR};$ENV{PATH}")
 
+# Reference-intake view binding, proven offscreen (no manual smoke). Needs Qt Quick for the
+# engine + Repeater that this test drives.
+qt_add_executable(tst_guiqml tst_guiqml.cpp)
+target_link_libraries(tst_guiqml PRIVATE Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick oic-app)
+add_test(NAME tst_guiqml COMMAND tst_guiqml)
+set_tests_properties(tst_guiqml PROPERTIES ENVIRONMENT "PATH=${OIC_QT_BIN_DIR};$ENV{PATH}")
+
 # Talks to the real Windows Credential Manager, so it is Windows-only.
 if(WIN32)
     oic_add_test(tst_credentials tst_credentials.cpp)

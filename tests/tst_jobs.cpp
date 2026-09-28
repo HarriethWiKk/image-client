@@ -141,6 +141,7 @@ class TstJobs : public QObject
 
 private slots:
     void successWritesAssetAndPersistsJob();
+    void editSuccessPersistsReferenceAsset();
     void candidateRetryOn500UsesSecondEndpoint();
     void clientErrorStopsWithoutResendingMultipart();
     void htmlErrorPageKeepsProbing();
@@ -189,6 +190,55 @@ void TstJobs::successWritesAssetAndPersistsJob()
     QCOMPARE(assets.at(0).height, 4);
     QCOMPARE(assets.at(0).sha256.size(), 64);  // hex sha256
     QVERIFY2(job.resultJson.contains(ref.relPath), qPrintable(job.resultJson));
+}
+
+void TstJobs::editSuccessPersistsReferenceAsset()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString dbPath = dir.filePath(QStringLiteral("lib.sqlite3"));
+
+    JobSpec spec = genSpec();
+    spec.image.editMode = true;
+    oic::protocol::ReferenceImage ref;
+    ref.name = QStringLiteral("r.png");
+    ref.dataUrl = QStringLiteral("data:image/png;base64,") + b64(fakePng(60));
+    spec.image.references.append(ref);
+
+    auto net = std::make_shared<FakeNet>();
+    net->replies.append(makeReply(200, QStringLiteral("application/json"), b64ImagesBody({ b64(fakePng(40)) })));
+    const JobDeps deps = makeDeps(dbPath, dir.path(), net);
+
+    QString error;
+    const JobOutcome outcome = runJob(spec, deps, nullptr, &error);
+    QVERIFY2(outcome.status == QLatin1String("succeeded"), qPrintable(outcome.error));
+
+    // The reference is an input, not a result: outcome.assets carries only the generated
+    // image (that list is what the gallery shows), so the user never sees their own upload back.
+    QCOMPARE(outcome.assets.size(), 1);
+
+    oic::store::Database verify(dbPath);
+    QVERIFY(verify.open(&error));
+    const oic::store::Job job = verify.job(outcome.jobId, /*found=*/nullptr, &error);
+    QCOMPARE(job.mode, QStringLiteral("edit"));
+
+    const QList<oic::store::Asset> assets = verify.assetsForJob(outcome.jobId, &error);
+    QCOMPARE(assets.size(), 2);  // one result + one reference
+    int results = 0;
+    int references = 0;
+    for (const oic::store::Asset &asset : assets) {
+        if (asset.role == QLatin1String("result")) {
+            ++results;
+        } else if (asset.role == QLatin1String("reference")) {
+            ++references;
+            QCOMPARE(asset.mime, QStringLiteral("image/png"));
+            QCOMPARE(asset.width, 8);   // fakePng declares 8x4, proving the ref was probed
+            QCOMPARE(asset.height, 4);
+            QVERIFY2(QFile::exists(QDir(deps.assetsRoot).filePath(asset.relPath)), qPrintable(asset.relPath));
+        }
+    }
+    QCOMPARE(results, 1);
+    QCOMPARE(references, 1);
 }
 
 void TstJobs::candidateRetryOn500UsesSecondEndpoint()

@@ -398,6 +398,52 @@ JobOutcome runJob(const JobSpec &spec, const JobDeps &deps, CancelToken *cancel,
 
     outcome.assets = written;
 
+    // SPEC 6.5: in edit mode the reference images are persisted as role="reference" assets
+    // under the same job, so history can show them and a later retry can restore them. This
+    // runs AFTER the generation already succeeded, so it is deliberately best-effort: a
+    // reference that cannot be written (quota, IO) is skipped rather than discarding a good
+    // result, and its path is not added to the rollback set for the same reason.
+    if (spec.image.editMode) {
+        for (const protocol::ReferenceImage &input : spec.image.references) {
+            QString mime;
+            QString encoded;
+            QString duErr;
+            if (!protocol::parseDataUrl(input.dataUrl, &mime, &encoded, &duErr)) {
+                continue;
+            }
+            bool decoded = false;
+            QString decErr;
+            const QByteArray refBytes = core::decodeBase64Limited(encoded, limits::kMaxReferenceImageBytes,
+                                                                  QStringLiteral("参考图"), &decoded, &decErr);
+            if (!decoded) {
+                continue;
+            }
+            const store::ImageInfo info = store::probeImage(refBytes);
+            if (!info.recognized) {
+                continue;
+            }
+            const QString refId = newId();
+            const store::AssetWriteResult wr = assets.write(outcome.jobId, refId, info.mime, refBytes);
+            if (!wr.ok()) {
+                continue;
+            }
+            store::Asset refRow;
+            refRow.id = refId;
+            refRow.jobId = outcome.jobId;
+            refRow.ordinal = ordinal++;
+            refRow.filename = wr.relPath.section(QLatin1Char('/'), -1);
+            refRow.relPath = wr.relPath;
+            refRow.bytes = wr.bytes;
+            refRow.mime = info.mime;
+            refRow.width = info.width;
+            refRow.height = info.height;
+            refRow.sha256 = QString::fromLatin1(QCryptographicHash::hash(refBytes, QCryptographicHash::Sha256).toHex());
+            refRow.role = QStringLiteral("reference");
+            refRow.createdAt = nowMs(deps.clock);
+            db.addAsset(refRow, &dbErr);
+        }
+    }
+
     QJsonObject result;
     QJsonArray assetArray;
     for (const AssetRef &ref : written) {

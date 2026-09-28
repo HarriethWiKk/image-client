@@ -6,6 +6,7 @@
 // controllers over a temp store.
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QJsonArray>
@@ -14,6 +15,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #include "oic/app/assetimageprovider.h"
 #include "oic/app/backend.h"
@@ -117,6 +119,9 @@ private slots:
     void profileControllerCrudDerivesCredentialTarget();
     void historyModelRolesPinAndDelete();
     void jobControllerGenerateFinishes();
+    void jobControllerEditPersistsReferenceAssets();
+    void addReferenceRejectsNonImage();
+    void generateEditWithoutReferenceFails();
     void jobControllerWrapperSurfacesError();
     void profileControllerInvokables();
     void settingsControllerRetentionPrunes();
@@ -305,6 +310,109 @@ void TstApp::jobControllerGenerateFinishes()
     }
     QVERIFY2(status == QLatin1String("succeeded"),
              qPrintable(QStringLiteral("status=%1 error=%2").arg(status, submitError)));
+}
+
+void TstApp::jobControllerEditPersistsReferenceAssets()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, imageDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.saveProfile(QStringLiteral("p1"), QStringLiteral("https://api.example.com"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300, &error));
+
+    // A real reference image on disk; the controller reads + probes it into a staged data URL.
+    const QString refFile = QDir(dir.path()).filePath(QStringLiteral("input/ref.png"));
+    QVERIFY(writePng(refFile, 40, 20));
+
+    JobController jobs(&backend);
+    const QString source = jobs.addReferencePath(QUrl::fromLocalFile(refFile).toString());
+    QVERIFY2(!source.isEmpty(), qPrintable(jobs.lastError()));
+    QCOMPARE(jobs.referenceCount(), 1);
+    QCOMPARE(jobs.referenceSources(), QStringList({ source }));  // the UI re-syncs its list from here
+
+    QSignalSpy finished(&jobs, &JobController::jobFinished);
+    QVERIFY(finished.isValid());
+    const QString id = jobs.generateEdit(QStringLiteral("p1"), QStringLiteral("gpt-image-2"),
+                                         QStringLiteral("make it a painting"), QStringLiteral("1024x1024"), 1,
+                                         QStringLiteral("openai"));
+    QVERIFY2(!id.isEmpty(), qPrintable(jobs.lastError()));
+    QCOMPARE(jobs.referenceCount(), 0);  // staged references are consumed on submit
+
+    QString status;
+    for (int i = 0; i < 100 && status.isEmpty(); ++i) {
+        QTest::qWait(20);
+        for (const QList<QVariant> &args : finished) {
+            if (args.at(0).toString() == id) {
+                status = args.at(1).toString();
+                break;
+            }
+        }
+    }
+    QVERIFY2(status == QLatin1String("succeeded"), qPrintable(QStringLiteral("status=%1").arg(status)));
+
+    int results = 0;
+    int references = 0;
+    for (const oic::store::Asset &asset : backend.database()->assetsForJob(id, &error)) {
+        if (asset.role == QLatin1String("result")) {
+            ++results;
+        } else if (asset.role == QLatin1String("reference")) {
+            ++references;
+            QCOMPARE(asset.mime, QStringLiteral("image/png"));
+            QCOMPARE(asset.width, 40);  // the on-disk reference is probed, not guessed
+            QCOMPARE(asset.height, 20);
+        }
+    }
+    QCOMPARE(results, 1);
+    QCOMPARE(references, 1);
+}
+
+void TstApp::addReferenceRejectsNonImage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Backend backend;  // addReferencePath only touches the filesystem + probe, so no deps needed
+
+    const QString notePath = QDir(dir.path()).filePath(QStringLiteral("note.txt"));
+    QFile note(notePath);
+    QVERIFY(note.open(QIODevice::WriteOnly));
+    note.write("this is not an image");
+    note.close();
+
+    JobController jobs(&backend);
+    QVERIFY2(jobs.addReferencePath(notePath).isEmpty(), "a non-image must be rejected");
+    QVERIFY(!jobs.lastError().isEmpty());
+    QCOMPARE(jobs.referenceCount(), 0);
+
+    // A missing file is likewise rejected, never staged as a broken reference.
+    const QString ghost = QDir(dir.path()).filePath(QStringLiteral("ghost.png"));
+    QVERIFY2(jobs.addReferencePath(ghost).isEmpty(), "a missing file must be rejected");
+    QVERIFY(!jobs.lastError().isEmpty());
+}
+
+void TstApp::generateEditWithoutReferenceFails()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    ProfileController profiles(&backend);
+    QVERIFY(profiles.saveProfile(QStringLiteral("p1"), QStringLiteral("https://api.example.com"),
+                                 QStringLiteral("openai"), QStringLiteral("gpt-image-2"), 300, &error));
+
+    JobController jobs(&backend);
+    const QString id = jobs.generateEdit(QStringLiteral("p1"), QStringLiteral("gpt-image-2"),
+                                         QStringLiteral("no refs"), QStringLiteral("1024x1024"), 1,
+                                         QStringLiteral("openai"));
+    QVERIFY2(id.isEmpty(), "an edit submit with no reference must fail");
+    QVERIFY2(jobs.lastError().contains(QString::fromUtf8("参考图")), qPrintable(jobs.lastError()));
 }
 
 void TstApp::settingsControllerRetentionPrunes()

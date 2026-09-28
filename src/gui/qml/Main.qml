@@ -3,6 +3,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 
 // GUI-B vertical slice: app shell (left nav + stacked views) and a working Generate
 // view bound to the C++ controllers (Jobs / Profiles) exposed by main.cpp as context
@@ -36,12 +37,24 @@ Window {
 
     property int view: 0            // 0 generate, 1 history, 2 settings
     property bool busy: false
+    property bool dropping: false   // true while a drag is over the reference card
     property string currentJobId: ""
     property string statusMessage: ""
 
     function relToUrl(rel) { return "image://asset/" + rel }
 
     ListModel { id: results }
+
+    // Stage one source (from drop or file dialog). The controller emits referencesChanged() on
+    // every mutation and the Repeater binds straight to Jobs.referenceSources, so no manual
+    // refresh here -- surface a rejection reason only.
+    function stageReference(urlOrPath) {
+        if (Jobs.addReferencePath(urlOrPath).isEmpty()) {
+            var e = Jobs.lastError()
+            if (e.length > 0)
+                statusMessage = e
+        }
+    }
 
     Connections {
         target: Jobs
@@ -179,11 +192,14 @@ Window {
                                 Layout.fillWidth: true
                                 spacing: root.gap
                                 Button {
-                                    text: root.busy ? qsTr("生成中…") : qsTr("生成")
+                                    text: root.busy ? qsTr("生成中…")
+                                          : (Jobs.referenceSources.length > 0 ? qsTr("图生图") : qsTr("生成"))
                                     enabled: !root.busy && fPrompt.text.length > 0
                                     onClicked: {
                                         var sz = cbSize.editText ? cbSize.editText.text : cbSize.currentText
-                                        var id = Jobs.generateJob(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
+                                        var id = Jobs.referenceSources.length > 0
+                                            ? Jobs.generateEdit(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
+                                            : Jobs.generateJob(fProfile.text, fModel.text, fPrompt.text, sz, sbN.value, "")
                                         if (!id)
                                             root.statusMessage = Jobs.lastError()
                                     }
@@ -193,6 +209,115 @@ Window {
                                 Item { Layout.fillWidth: true }
                             }
                             Label { text: root.statusMessage; color: root.danger; visible: root.statusMessage.length > 0; wrapMode: Text.WordWrap }
+                        }
+                    }
+
+                    Rectangle {
+                        id: refCard
+                        Layout.fillWidth: true
+                        radius: root.radius
+                        color: root.surface
+                        border.color: root.dropping ? root.accent : root.borderColor
+                        border.width: root.dropping ? 2 : 1
+                        implicitHeight: refCol.implicitHeight + 24
+
+                        ColumnLayout {
+                            id: refCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 12
+                            spacing: root.gap
+
+                            Text { text: qsTr("参考图 · 图生图（拖放 / 选择 / 粘贴，加入后自动切到编辑）"); color: root.fgMuted; font.pixelSize: 13 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: root.gap
+                                Button {
+                                    text: qsTr("选择图片…")
+                                    onClicked: fileDialog.open()
+                                }
+                                Button {
+                                    text: qsTr("从剪贴板粘贴")
+                                    onClicked: {
+                                        if (!Jobs.addReferenceFromClipboard()) {
+                                            var e = Jobs.lastError()
+                                            if (e.length > 0)
+                                                root.statusMessage = e
+                                        }
+                                    }
+                                }
+                                Button {
+                                    text: qsTr("清空")
+                                    visible: Jobs.referenceSources.length > 0
+                                    onClicked: Jobs.clearReferences()
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: root.gap
+                                Repeater {
+                                    model: Jobs.referenceSources
+                                    delegate: Rectangle {
+                                        width: 96
+                                        height: 96
+                                        radius: root.radius
+                                        color: root.bg
+                                        border.color: root.borderColor
+                                        clip: true
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 2
+                                            source: modelData
+                                            sourceSize.width: 256
+                                            fillMode: Image.PreserveAspectFit
+                                            asynchronous: true
+                                        }
+                                        Button {
+                                            anchors.top: parent.top
+                                            anchors.right: parent.right
+                                            width: 22
+                                            height: 22
+                                            text: "×"
+                                            onClicked: Jobs.removeReference(modelData)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Full-card drop overlay, declared LAST so it sits on top. A DropArea only
+                        // handles drag-and-drop events, so button and thumbnail clicks still reach
+                        // the items below it (verified on the real window). During a drag the whole
+                        // card lights up as the accepting surface; the highlight clears on exit/drop.
+                        DropArea {
+                            anchors.fill: parent
+                            onEntered: (drag) => { if (drag.hasUrls) root.dropping = true }
+                            onPositionChanged: (drag) => { if (drag.hasUrls) root.dropping = true }
+                            onExited: root.dropping = false
+                            onDropped: (drop) => {
+                                root.dropping = false
+                                if (drop.hasUrls) {
+                                    for (var i = 0; i < drop.urls.length; ++i)
+                                        root.stageReference(drop.urls[i].toString())
+                                    drop.acceptProposedAction()
+                                }
+                            }
+                        }
+                    }
+
+                    FileDialog {
+                        id: fileDialog
+                        title: qsTr("选择参考图")
+                        nameFilters: [qsTr("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp)"), qsTr("所有文件 (*)")]
+                        fileMode: FileDialog.OpenFiles
+                        onAccepted: {
+                            // Qt 6.8's QtQuick.Dialogs FileDialog exposes selectedFiles (a list of
+                            // urls) for multi-select -- NOT selectedUrls, which does not exist on this
+                            // type (its absence threw "ReferenceError" and silently dropped the picks).
+                            for (var i = 0; i < fileDialog.selectedFiles.length; ++i)
+                                root.stageReference(fileDialog.selectedFiles[i].toString())
                         }
                     }
 
