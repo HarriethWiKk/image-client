@@ -2,6 +2,11 @@
 # Copyright 2026 HarriethWiKk
 qt_add_executable(ImageClient WIN32 main.cpp)
 
+# Must precede qt_add_qml_module: CMake reads this property while generating the
+# module's qmldir. Set after the call, Theme is emitted as a plain type and every
+# `Theme.*` binding resolves against the type name -> undefined.
+set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(ImageClient
     URI App
     VERSION 1.0
@@ -18,8 +23,6 @@ qt_add_qml_module(ImageClient
         qml/Main.qml
         qml/LightboxOverlay.qml
 )
-
-set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 target_link_libraries(ImageClient PRIVATE
     oic-core
