@@ -876,14 +876,16 @@ void TstApp::modelsControllerProviderIsolation()
             *absent = false;
         return QByteArray("k");
     };
-    // A per-host /v1/models responder: both providers expose "shared-model", only A has
-    // "a-only" and only B has "b-only" -- so a same-named model is disambiguated by provider.
+    // A per-host /v1/models responder mixing image + non-image ids. Both providers expose
+    // "gpt-image-1"; only A has dall-e-3, only B has flux-1-schnell; each also carries a
+    // non-image row that must be filtered out. So one pass proves image-only + isolation.
     deps.sender = [](const oic::net::Request &request) {
         QJsonArray data;
-        data.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("shared-model")}});
-        data.append(QJsonObject{{QStringLiteral("id"),
-                                 request.url.host().contains(QLatin1String("a.")) ? QStringLiteral("a-only")
-                                                                                  : QStringLiteral("b-only")}});
+        const bool providerA = request.url.host().contains(QLatin1String("a."));
+        auto add = [&data](const QString &id) { data.append(QJsonObject{{QStringLiteral("id"), id}}); };
+        add(QStringLiteral("gpt-image-1"));
+        add(providerA ? QStringLiteral("dall-e-3") : QStringLiteral("flux-1-schnell"));
+        add(providerA ? QStringLiteral("text-embedding-3-small") : QStringLiteral("whisper-1"));
         QJsonObject body;
         body.insert(QStringLiteral("data"), data);
         oic::net::Reply reply;
@@ -912,21 +914,24 @@ void TstApp::modelsControllerProviderIsolation()
     models.refresh(QStringLiteral("A"));
     QTRY_VERIFY_WITH_TIMEOUT(!models.loading(), 3000);
     QVERIFY(models.error().isEmpty());
-    QCOMPARE(models.models(), (QStringList{QStringLiteral("shared-model"), QStringLiteral("a-only")}));
+    // Image-only (embedding dropped) and provider-scoped (only A's image models).
+    QCOMPARE(models.models(), (QStringList{QStringLiteral("gpt-image-1"), QStringLiteral("dall-e-3")}));
 
-    // The fetched list is cached back onto the profile's allowed_models (offline last-known).
+    // The fetched (already filtered) list is cached back onto the profile's allowed_models.
     QString storeError;
     oic::store::Profile storedA;
     for (const oic::store::Profile &p : backend.database()->profiles(&storeError))
         if (p.name == QStringLiteral("A"))
             storedA = p;
-    QCOMPARE(storedA.allowedModels, (QStringList{QStringLiteral("shared-model"), QStringLiteral("a-only")}));
+    QCOMPARE(storedA.allowedModels, (QStringList{QStringLiteral("gpt-image-1"), QStringLiteral("dall-e-3")}));
 
-    // Switching provider replaces the list wholesale -- provider isolation, no bleed-through.
+    // Switching provider replaces the list wholesale -- same-named "gpt-image-1" shared, but
+    // dall-e-3 / flux-1-schnell never bleed across, and the audio row is filtered.
     models.refresh(QStringLiteral("B"));
     QTRY_VERIFY_WITH_TIMEOUT(!models.loading(), 3000);
-    QCOMPARE(models.models(), (QStringList{QStringLiteral("shared-model"), QStringLiteral("b-only")}));
-    QVERIFY(!models.models().contains(QStringLiteral("a-only")));
+    QCOMPARE(models.models(), (QStringList{QStringLiteral("gpt-image-1"), QStringLiteral("flux-1-schnell")}));
+    QVERIFY(!models.models().contains(QStringLiteral("dall-e-3")));
+    QVERIFY(!models.models().contains(QStringLiteral("whisper-1")));
 }
 
 QTEST_GUILESS_MAIN(TstApp)

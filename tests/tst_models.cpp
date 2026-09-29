@@ -15,6 +15,9 @@ private slots:
     void isGrokImageModel_data();
     void isGrokImageModel();
 
+    void looksLikeImageModel_data();
+    void looksLikeImageModel();
+
     void parseSize_data();
     void parseSize();
 
@@ -166,6 +169,39 @@ void TstModels::closestGrokRatioStaysWithinSupportedSet()
             QVERIFY2(ratio != QLatin1String("auto"), context.constData());
         }
     }
+}
+
+void TstModels::looksLikeImageModel_data()
+{
+    QTest::addColumn<QString>("model");
+    QTest::addColumn<bool>("expected");
+
+    // Image-family ids across the three protocols plus common gateway vendors.
+    QTest::newRow("gpt-image") << QStringLiteral("gpt-image-1") << true;
+    QTest::newRow("gpt-image-2") << QStringLiteral("gpt-image-2") << true;
+    QTest::newRow("dall-e") << QStringLiteral("dall-e-3") << true;
+    QTest::newRow("grok image") << QStringLiteral("grok-2-image") << true;
+    QTest::newRow("grok imagine") << QStringLiteral("grok-imagine-image") << true;
+    QTest::newRow("imagen") << QStringLiteral("imagen-3.0-generate-002") << true;
+    QTest::newRow("gemini image-gen") << QStringLiteral("gemini-2.0-flash-preview-image-generation") << true;
+    QTest::newRow("flux") << QStringLiteral("flux-1-schnell") << true;
+    QTest::newRow("stable diffusion") << QStringLiteral("stable-diffusion-xl") << true;
+    QTest::newRow("case insensitive") << QStringLiteral("FLUX-DEV") << true;
+
+    // Chat / embedding / audio / text-must-not-read-as-image. "gemini" must not match "image".
+    QTest::newRow("gpt chat") << QStringLiteral("gpt-4o") << false;
+    QTest::newRow("embedding") << QStringLiteral("text-embedding-3-small") << false;
+    QTest::newRow("whisper") << QStringLiteral("whisper-1") << false;
+    QTest::newRow("tts") << QStringLiteral("tts-1") << false;
+    QTest::newRow("gemini text") << QStringLiteral("gemini-1.5-flash") << false;
+    QTest::newRow("empty") << QString() << false;
+}
+
+void TstModels::looksLikeImageModel()
+{
+    QFETCH(const QString, model);
+    QFETCH(const bool, expected);
+    QCOMPARE(oic::core::looksLikeImageModel(model), expected);
 }
 
 QTEST_GUILESS_MAIN(TstModels)

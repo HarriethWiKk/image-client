@@ -17,6 +17,10 @@ bool isGptImage2(QStringView model);
 
 bool isGrokImageModel(QStringView model);
 
+// Heuristic: does this /v1/models id look like an image model (vs chat / embedding /
+// audio)? Curates the picker's defaults only -- see models.cpp for why it is loose.
+bool looksLikeImageModel(QStringView model);
+
 // Derives "1k"/"2k" from a "WxH" size string; falls back to "1k" when unparsable.
 QString grokResolutionFromSize(QStringView size);
 

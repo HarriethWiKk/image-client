@@ -9,6 +9,7 @@
 
 #include "oic/app/backend.h"
 #include "oic/core/limits.h"
+#include "oic/core/models.h"
 #include "oic/jobs/executor.h"
 #include "oic/net/transport.h"
 #include "oic/protocol/imageprotocol.h"
@@ -107,6 +108,18 @@ void ModelsController::refresh(const QString &profileName)
                                     models = oic::protocol::parseModelList(protocol, reply.body, &error);
                                     if (models.isEmpty() && error.isEmpty() && reply.status < 200)
                                         error = QStringLiteral("上游返回状态 %1").arg(reply.status);
+                                    // Curate to image models (the combo stays editable, so a name
+                                    // the heuristic misses is still typeable). If a provider uses
+                                    // unusual image-model naming and nothing matches, keep the raw
+                                    // list rather than leave the picker empty.
+                                    QStringList images;
+                                    for (const QString &id : models) {
+                                        if (oic::core::looksLikeImageModel(id))
+                                            images.append(id);
+                                    }
+                                    if (!models.isEmpty() && images.isEmpty())
+                                        images = models;
+                                    models = images;
                                 }
                             } else {
                                 error = QStringLiteral("后端未就绪");

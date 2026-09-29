@@ -47,6 +47,25 @@ constexpr std::array<const char *, 5> kGrokImageModels{{
     "grok-imagine-image-quality",
 }};
 
+// A loose, case-insensitive substring allowlist for "this id looks like an image model".
+// /v1/models has no reliable capability field, so this only curates the picker's defaults:
+// the combo stays editable and ModelsController falls back to the raw list if nothing
+// matches, so an exotic image-model name is never stranded -- it is only never silently
+// mixed in among chat/embedding/audio rows.
+constexpr std::array<const char *, 11> kImageModelTokens{{
+    "image",     // gpt-image-*, *-image, imagen* (imagen contains "image")
+    "imagine",   // grok-imagine* (no "image" substring on its own)
+    "dall",      // dall-e-*
+    "flux",      // black-forest flux family
+    "diffusion", // stable-diffusion-*
+    "sdxl",
+    "sd3",
+    "seedream",
+    "seededit",
+    "kandinsky",
+    "photon",    // luma photon
+}};
+
 QString exactRatio(int width, int height) {
   const int divisor = std::gcd(width, height);
   return QStringLiteral("%1:%2").arg(width / divisor).arg(height / divisor);
@@ -92,6 +111,15 @@ bool isGrokImageModel(QStringView model) {
     const QLatin1String literal(name);
     return value == literal || value.startsWith(QString(literal) + QLatin1Char('-'));
   });
+}
+
+bool looksLikeImageModel(QStringView model) {
+  const QString value = normalize(model);
+  if (value.isEmpty()) {
+    return false;
+  }
+  return std::any_of(kImageModelTokens.begin(), kImageModelTokens.end(),
+                     [&value](const char *token) { return value.contains(QLatin1String(token)); });
 }
 
 bool parseSize(QStringView size, int *width, int *height) {
