@@ -243,7 +243,7 @@ Window {
 
                         Column {
                             anchors.centerIn: parent
-                            spacing: 3
+                            spacing: Theme.gapXs
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: modelData.icon
@@ -455,7 +455,7 @@ Window {
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: Theme.gap
-                                    spacing: 10
+                                    spacing: Theme.gap
 
                                     // 模型选择行
                                     ColumnLayout {
@@ -471,7 +471,7 @@ Window {
 
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: 6
+                                            spacing: Theme.gapSm
 
                                             AppComboBox {
                                                 id: cbModel
@@ -704,7 +704,7 @@ Window {
                                 Layout.fillWidth: true
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 10
+                                    anchors.margins: Theme.gapSm
                                     spacing: Theme.gap
 
                                     AppButton {
@@ -842,7 +842,7 @@ Window {
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
-                                            spacing: 10
+                                            spacing: Theme.gap
 
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
@@ -917,7 +917,7 @@ Window {
                                                         anchors.fill: parent
                                                         anchors.leftMargin: 8
                                                         anchors.rightMargin: 8
-                                                        spacing: 6
+                                                        spacing: Theme.gapSm
 
                                                         AppIconButton {
                                                             text: "🔍"
@@ -1069,7 +1069,7 @@ Window {
 
                             AppCard {
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.margins: Theme.gapSm
                                 clip: true
                                 hoverable: true
                                 border.color: model.pinned ? Theme.warning : (hovered ? Theme.accent : Theme.borderColor)
@@ -1078,7 +1078,7 @@ Window {
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: Theme.gapSm
-                                    spacing: 6
+                                    spacing: Theme.gapSm
 
                                     // 缩略图容器
                                     Rectangle {
@@ -1139,7 +1139,7 @@ Window {
                                     // 状态与模式标签行
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 6
+                                        spacing: Theme.gapSm
 
                                         AppStatusBadge {
                                             status: model.status || ""
@@ -1586,7 +1586,7 @@ Window {
                                         RowLayout {
                                             id: hostRow
                                             anchors.centerIn: parent
-                                            spacing: 6
+                                            spacing: Theme.gapSm
 
                                             Text {
                                                 text: modelData
