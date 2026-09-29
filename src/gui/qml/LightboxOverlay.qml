@@ -20,7 +20,16 @@ Popup {
     height: parent ? parent.height : 480
     visible: Lightbox.open
 
-    background: Rectangle { color: "#d9000000" }
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 150; easing.type: Easing.OutQuad }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 120; easing.type: Easing.InQuad }
+    }
+
+    background: Rectangle {
+        color: Theme.dark ? "#eb0a0a0d" : "#e6111114"
+    }
 
     function urlAt(index) {
         return (index >= 0 && index < Lightbox.model.length) ? Lightbox.model[index] : ""
@@ -40,8 +49,6 @@ Popup {
     function saveCurrent() {
         var rel = relAt(Lightbox.currentIndex)
         if (rel === "") { status = qsTr("无法保存：图片未就绪"); return }
-        // QQuickFileDialog (Qt 6.8) has no `defaultName`/`SaveAs`: prefill the name by seeding
-        // currentFile (a url) from the asset's own path, and ask the platform for a save dialog.
         saveDialog.currentFile = "file:///" + Backend.assetAbsolutePath(rel).replace(/\\/g, "/")
         saveDialog.open()
     }
@@ -59,8 +66,6 @@ Popup {
         focus: true
         activeFocusOnTab: true
         onActiveFocusChanged: {
-            // If focus ever escapes (Tab), pull it straight back -- the web lightbox leaked focus
-            // behind the dialog; a modal popup that re-grabs does not.
             if (!activeFocus && lightbox.visible)
                 surface.forceActiveFocus()
         }
@@ -79,63 +84,106 @@ Popup {
             else if (event.key === Qt.Key_O) { lightbox.openCurrentExternally(); event.accepted = true }
         }
 
-        // Top bar: filename + readout on the left, zoom / compare / close on the right.
+        // Top bar: Glassmorphic bar with readout, zoom, compare, save & close actions
         Rectangle {
             id: topBar
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 40
-            color: "#22000000"
+            height: 48
+            color: Theme.dark ? "#881a1a1e" : "#ccffffff"
+            border.color: Theme.borderColor
+            border.width: 1
+
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                spacing: 10
-                Label {
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 12
+
+                Text {
                     text: lightbox.urlAt(Lightbox.currentIndex)
-                    color: "#e8e8e8"; elide: Text.ElideMiddle
+                    color: Theme.dark ? "#ededf0" : "#18181b"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize
+                    elide: Text.ElideMiddle
                     Layout.fillWidth: true
                 }
-                Label {
+
+                Text {
                     visible: lightbox.status.length > 0
                     text: lightbox.status
-                    color: "#e0a94a"
+                    color: Theme.warning
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeSm
                 }
-                Label {
-                    text: (Lightbox.currentIndex + 1) + " / " + Lightbox.count
-                          + "   " + Math.round(Lightbox.zoom * 100) + "%"
-                          + (Lightbox.canCompare ? "   [C]对比" : "")
-                    color: "#9a9a9a"
+
+                Rectangle {
+                    implicitHeight: 24
+                    implicitWidth: infoRow.implicitWidth + 14
+                    radius: 12
+                    color: Theme.surfaceAlt
+                    border.color: Theme.borderColor
+                    border.width: 1
+
+                    Row {
+                        id: infoRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Text {
+                            text: (Lightbox.currentIndex + 1) + " / " + Lightbox.count
+                            color: Theme.fg
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeXs
+                            font.bold: true
+                        }
+                        Text {
+                            text: "·  " + Math.round(Lightbox.zoom * 100) + "%"
+                            color: Theme.fgMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeXs
+                        }
+                    }
                 }
-                Button {
-                    text: qsTr("另存为")
-                    ToolTip.text: qsTr("原生另存为 [S]")
-                    ToolTip.visible: hovered
+
+                AppButton {
+                    variant: "secondary"
+                    implicitHeight: 30
+                    text: qsTr("另存为 [S]")
                     onClicked: lightbox.saveCurrent()
                 }
-                Button {
-                    text: qsTr("用系统打开")
-                    ToolTip.text: qsTr("外部程序打开，webp 等无法预览的格式走这里 [O]")
+
+                AppButton {
+                    variant: "secondary"
+                    implicitHeight: 30
+                    text: qsTr("系统打开 [O]")
+                    ToolTip.text: qsTr("调用外部看图程序打开 (支持 WebP 完整预览)")
                     ToolTip.visible: hovered
                     onClicked: lightbox.openCurrentExternally()
                 }
-                Button {
-                    text: qsTr("对比")
+
+                AppButton {
+                    variant: Lightbox.compare ? "primary" : "secondary"
+                    implicitHeight: 30
+                    text: qsTr("对比 [C]")
                     enabled: Lightbox.canCompare
-                    highlighted: Lightbox.compare
                     onClicked: Lightbox.toggleCompare()
                 }
-                Button { text: qsTr("关闭"); onClicked: Lightbox.close() }
+
+                AppIconButton {
+                    text: "✕"
+                    implicitWidth: 30
+                    implicitHeight: 30
+                    toolTipText: qsTr("关闭灯箱 [Esc]")
+                    onClicked: Lightbox.close()
+                }
             }
         }
 
-        // Image surface: one panel, or two side-by-side in compare mode. Full resolution comes from
-        // loading the asset at native size (sourceSize 0 => the provider returns the full image) and
-        // scaling by the controller's zoom; wheel/drag adjust and pan.
+        // Image surface: one panel, or two side-by-side in compare mode
         Row {
             anchors.top: topBar.bottom
-            anchors.bottom: parent.bottom
+            anchors.bottom: bottomHintBar.top
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.margins: 16
@@ -163,14 +211,16 @@ Popup {
                         sourceSize.width: 0
                         sourceSize.height: 0
                     }
+
                     BusyIndicator {
                         anchors.centerIn: parent
                         running: img.status === Image.Loading
                         visible: running
                     }
+
                     MouseArea {
                         anchors.fill: parent
-                        acceptedButtons: Qt.NoButton  // let clicks pass; only wheel is consumed here
+                        acceptedButtons: Qt.NoButton
                         onWheel: (wheel) => {
                             if (wheel.angleDelta.y > 0) Lightbox.zoomIn()
                             else Lightbox.zoomOut()
@@ -179,9 +229,71 @@ Popup {
                 }
             }
         }
+
+        // Bottom shortcut guide bar
+        Rectangle {
+            id: bottomHintBar
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottomMargin: 12
+            height: 28
+            width: hintRow.implicitWidth + 24
+            radius: 14
+            color: Theme.dark ? "#881a1a1e" : "#d0ffffff"
+            border.color: Theme.borderColor
+            border.width: 1
+
+            Row {
+                id: hintRow
+                anchors.centerIn: parent
+                spacing: 12
+
+                Text {
+                    text: "Esc 退出"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+                Text { text: "·"; color: Theme.borderColor }
+                Text {
+                    text: "← / → 翻页"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+                Text { text: "·"; color: Theme.borderColor }
+                Text {
+                    text: "+ / - 缩放"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+                Text { text: "·"; color: Theme.borderColor }
+                Text {
+                    text: "C 双图对比"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+                Text { text: "·"; color: Theme.borderColor }
+                Text {
+                    text: "S 另存为"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+                Text { text: "·"; color: Theme.borderColor }
+                Text {
+                    text: "O 系统查看"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    color: Theme.fgMuted
+                }
+            }
+        }
     }
 
-    // Native "Save As". selectedFile is a file:// url that Backend.copyAssetTo accepts.
+    // Native "Save As"
     FileDialog {
         id: saveDialog
         title: qsTr("另存为")

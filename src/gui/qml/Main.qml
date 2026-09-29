@@ -18,21 +18,20 @@ Window {
     visible: true
     title: qsTr("image-client")
 
-    // Palette switches on Settings.themeName (persisted). Names are stable so all existing
-    // bindings keep working; a proper Theme singleton is a later refactor.
-    readonly property bool dark: Settings.themeName !== "light"
-    readonly property color bg: dark ? "#141414" : "#f4f4f6"
-    readonly property color surface: dark ? "#1e1e1e" : "#ffffff"
-    readonly property color surfaceAlt: dark ? "#282828" : "#e9e9ee"
-    readonly property color borderColor: dark ? "#3a3a3a" : "#d3d3da"
-    readonly property color fg: dark ? "#e8e8e8" : "#1a1a1a"
-    readonly property color fgMuted: dark ? "#9a9a9a" : "#66666e"
-    readonly property color accent: "#4a86d8"
-    readonly property color accentFg: "#ffffff"  // text drawn on an accent-filled surface
-    readonly property color danger: dark ? "#e0655f" : "#c23b34"
-    readonly property real radius: 10
-    readonly property real gap: 12
-    readonly property real gapLg: 20
+    // Palette bridged directly to Theme singleton so all existing bindings keep working.
+    readonly property bool dark: Theme.dark
+    readonly property color bg: Theme.bg
+    readonly property color surface: Theme.surface
+    readonly property color surfaceAlt: Theme.surfaceAlt
+    readonly property color borderColor: Theme.borderColor
+    readonly property color fg: Theme.fg
+    readonly property color fgMuted: Theme.fgMuted
+    readonly property color accent: Theme.accent
+    readonly property color accentFg: Theme.accentFg
+    readonly property color danger: Theme.danger
+    readonly property real radius: Theme.radius
+    readonly property real gap: Theme.gap
+    readonly property real gapLg: Theme.gapLg
 
     color: bg
 
@@ -42,6 +41,16 @@ Window {
     property string currentJobId: ""
     property string statusMessage: ""
     property string editingName: ""   // profile being edited in the settings editor ("" = new)
+    property bool providerDrawerOpen: false
+
+    function showToast(msg, type) {
+        if (toast) toast.show(msg, type || "info")
+    }
+
+    onStatusMessageChanged: {
+        if (statusMessage.length > 0)
+            showToast(statusMessage, "error")
+    }
 
     function resetProfileEditor() {
         editingName = ""
@@ -173,37 +182,93 @@ Window {
         anchors.fill: parent
         spacing: 0
 
+        // Modern Left Navigation Rail
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 92
-            color: root.surface
+            Layout.preferredWidth: 76
+            color: Theme.surface
+            border.color: Theme.borderColor
+            border.width: 1
+
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.topMargin: 16
+                anchors.bottomMargin: 16
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
                 spacing: 8
+
+                // App Brand Icon
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 42
+                    Layout.preferredHeight: 42
+                    radius: Theme.radius
+                    color: Theme.accentSubtle
+                    border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "⚡"
+                        font.pixelSize: 20
+                    }
+                }
+
+                Item { Layout.preferredHeight: 12 }
+
                 Repeater {
-                    model: [qsTr("生成"), qsTr("历史"), qsTr("设置")]
-                    delegate: Button {
+                    model: [
+                        { name: qsTr("生成"), icon: "🎨" },
+                        { name: qsTr("历史"), icon: "📜" },
+                        { name: qsTr("设置"), icon: "⚙️" }
+                    ]
+                    delegate: Rectangle {
+                        id: navBtn
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 66
-                        checkable: true
-                        checked: root.view === index
-                        onClicked: root.view = index
-                        background: Rectangle {
-                            radius: root.radius
-                            color: parent.checked ? root.surfaceAlt : "transparent"
-                            border.color: parent.checked ? root.accent : "transparent"
-                            border.width: 1
+                        Layout.preferredHeight: 56
+                        radius: Theme.radiusSm
+                        color: (root.view === index) ? Theme.surfaceAlt : (navMouse.containsMouse ? Theme.surfaceHover : "transparent")
+
+                        // Active Indicator Strip on the left
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 3
+                            height: 24
+                            radius: 1.5
+                            color: Theme.accent
+                            visible: root.view === index
                         }
-                        contentItem: Text {
-                            text: modelData
-                            color: parent.checked ? root.accent : root.fgMuted
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font.pixelSize: 13
+
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 3
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: modelData.icon
+                                font.pixelSize: 18
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: modelData.name
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeXs
+                                font.weight: (root.view === index) ? Font.DemiBold : Font.Normal
+                                color: (root.view === index) ? Theme.accent : (navMouse.containsMouse ? Theme.fg : Theme.fgMuted)
+                            }
+                        }
+
+                        MouseArea {
+                            id: navMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.view = index
                         }
                     }
                 }
+
                 Item { Layout.fillHeight: true }
             }
         }
@@ -214,293 +279,690 @@ Window {
             currentIndex: root.view
             onCurrentIndexChanged: if (currentIndex === 1) History.refresh()
 
-            // ---------------- Generate ----------------
-            ScrollView {
-                clip: true
-                ColumnLayout {
-                    width: Math.min(root.width - 140, 720)
-                    x: 24
-                    spacing: root.gapLg
+            // ---------------- Generate (双栏现代工作台) ----------------
+            Item {
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: Theme.gapLg
 
-                    GroupBox {
-                        Layout.fillWidth: true
-                        label: Text { text: qsTr("连接 · Provider + 密钥"); color: root.fgMuted; font.pixelSize: 13 }
-                        ColumnLayout {
-                            width: parent.width
-                            spacing: 8
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: root.gap
-                                ComboBox {
-                                    id: cbProvider
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    model: Profiles.profiles
-                                    textRole: "name"
-                                    onActivated: root.selectProvider(currentText)
-                                    Component.onCompleted: {
-                                        var idx = -1
-                                        for (var i = 0; i < model.length; ++i)
-                                            if (model[i].name === "default") { idx = i; break }
-                                        if (idx >= 0) currentIndex = idx
-                                        else { currentIndex = -1; editText.text = "default" }
-                                        root.selectProvider(currentText)
-                                    }
-                                }
-                                TextField { id: fKey; Layout.fillWidth: true; placeholderText: qsTr("API key"); echoMode: TextInput.Password }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: root.gap
-                                TextField { id: fBase; Layout.fillWidth: true; text: "https://api.openai.com"; placeholderText: qsTr("base url") }
-                                ComboBox { id: cbProto; model: ["openai", "grok", "gemini"] }
-                                Button {
-                                    text: qsTr("保存连接")
-                                    onClicked: {
-                                        if (!Profiles.addProfile(cbProvider.currentText, fBase.text, cbProto.currentText, cbModel.currentText, 0)) {
-                                            root.statusMessage = Profiles.lastError()
-                                            return
-                                        }
-                                        if (fKey.text.length > 0 && !Profiles.setCredential(cbProvider.currentText, fKey.text)) {
-                                            root.statusMessage = Profiles.lastError()
-                                            return
-                                        }
-                                        root.statusMessage = qsTr("已保存 Provider")
-                                        Models.refresh(cbProvider.currentText)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // 左侧控制台面板 (弹性 320~380px)
+                    ScrollView {
+                        Layout.preferredWidth: Math.min(380, Math.max(320, parent.width * 0.35))
+                        Layout.fillHeight: true
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    GroupBox {
-                        Layout.fillWidth: true
-                        label: Text { text: qsTr("生成"); color: root.fgMuted; font.pixelSize: 13 }
                         ColumnLayout {
-                            width: parent.width
-                            spacing: root.gap
-                            TextArea {
-                                id: fPrompt
+                            width: parent.width - 12
+                            spacing: Theme.gap
+
+                            // 1. 服务商与连接卡片 (可收起抽屉)
+                            AppCard {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 96
-                                placeholderText: qsTr("描述你要生成的图像…")
-                                wrapMode: TextArea.Wrap
-                            }
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: root.gap
-                                rowSpacing: 8
-                                Layout.fillWidth: true
-                                Label { text: qsTr("模型"); color: root.fgMuted }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 6
-                                    ComboBox {
-                                        id: cbModel
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 8
+
+                                    RowLayout {
                                         Layout.fillWidth: true
-                                        editable: true
-                                        model: Models.models
-                                        Component.onCompleted: editText.text = "gpt-image-2"
+                                        spacing: 8
+
+                                        Text {
+                                            text: "🌐"
+                                            font.pixelSize: 14
+                                        }
+
+                                        Text {
+                                            text: cbProvider.currentText ? cbProvider.currentText : qsTr("选择 Provider")
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSize
+                                            font.bold: true
+                                            color: Theme.fg
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        AppStatusBadge {
+                                            text: cbProto.currentText
+                                            status: "running"
+                                        }
+
+                                        AppButton {
+                                            variant: "ghost"
+                                            implicitHeight: 28
+                                            text: root.providerDrawerOpen ? qsTr("收起 ▴") : qsTr("配置 ▾")
+                                            onClicked: root.providerDrawerOpen = !root.providerDrawerOpen
+                                        }
                                     }
-                                    BusyIndicator {
-                                        running: Models.loading
-                                        visible: Models.loading
-                                        Layout.preferredWidth: 20
-                                        Layout.preferredHeight: 20
-                                    }
-                                    ToolButton {
-                                        text: "⟳"
-                                        hoverEnabled: true
-                                        ToolTip.text: qsTr("重新拉取该 Provider 的模型列表")
-                                        ToolTip.visible: hovered
-                                        onClicked: Models.refresh(cbProvider.currentText)
+
+                                    // 可折叠配置抽屉
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        visible: root.providerDrawerOpen
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: Theme.borderColor
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.gapSm
+                                            AppComboBox {
+                                                id: cbProvider
+                                                Layout.fillWidth: true
+                                                editable: true
+                                                model: Profiles.profiles
+                                                textRole: "name"
+                                                onActivated: root.selectProvider(currentText)
+                                                Component.onCompleted: {
+                                                    var idx = -1
+                                                    for (var i = 0; i < model.length; ++i)
+                                                        if (model[i].name === "default") { idx = i; break }
+                                                    if (idx >= 0) currentIndex = idx
+                                                    else { currentIndex = -1; editText.text = "default" }
+                                                    root.selectProvider(currentText)
+                                                }
+                                            }
+                                            AppTextField {
+                                                id: fKey
+                                                Layout.fillWidth: true
+                                                placeholderText: qsTr("API key")
+                                                echoMode: TextInput.Password
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.gapSm
+                                            AppTextField {
+                                                id: fBase
+                                                Layout.fillWidth: true
+                                                text: "https://api.openai.com"
+                                                placeholderText: qsTr("base url")
+                                            }
+                                            AppComboBox {
+                                                id: cbProto
+                                                Layout.preferredWidth: 100
+                                                model: ["openai", "grok", "gemini"]
+                                            }
+                                            AppButton {
+                                                variant: "primary"
+                                                text: qsTr("保存")
+                                                onClicked: {
+                                                    if (!Profiles.addProfile(cbProvider.currentText, fBase.text, cbProto.currentText, cbModel.currentText, 0)) {
+                                                        root.showToast(Profiles.lastError(), "error")
+                                                        return
+                                                    }
+                                                    if (fKey.text.length > 0 && !Profiles.setCredential(cbProvider.currentText, fKey.text)) {
+                                                        root.showToast(Profiles.lastError(), "error")
+                                                        return
+                                                    }
+                                                    root.showToast(qsTr("已成功保存 Provider 配置"), "success")
+                                                    Models.refresh(cbProvider.currentText)
+                                                    root.providerDrawerOpen = false
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                                Label { text: qsTr("尺寸"); color: root.fgMuted }
-                                ComboBox { id: cbSize; editable: true; model: ["1024x1024", "1536x1024", "1024x1536", "auto"] }
-                                Label { text: qsTr("数量 n"); color: root.fgMuted }
-                                SpinBox { id: sbN; from: 1; to: 8 }
                             }
-                            Text {
-                                visible: Models.error.length > 0
-                                text: Models.error
-                                color: root.fgMuted
-                                font.pixelSize: 11
-                            }
-                            RowLayout {
+
+                            // 2. 提示词卡片 (Prompt)
+                            AppCard {
                                 Layout.fillWidth: true
-                                spacing: root.gap
-                                Button {
-                                    text: root.busy ? qsTr("生成中…")
-                                          : (Jobs.referenceSources.length > 0 ? qsTr("图生图") : qsTr("生成"))
-                                    enabled: !root.busy && fPrompt.text.length > 0
-                                    onClicked: root.doGenerate()
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            text: qsTr("提示词 (Prompt)")
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSize
+                                            font.weight: Font.DemiBold
+                                            color: Theme.fg
+                                            Layout.fillWidth: true
+                                        }
+                                        AppIconButton {
+                                            text: "✕"
+                                            toolTipText: qsTr("清空提示词")
+                                            visible: fPrompt.text.length > 0
+                                            onClicked: fPrompt.text = ""
+                                        }
+                                    }
+
+                                    AppTextArea {
+                                        id: fPrompt
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 110
+                                        placeholderText: qsTr("描述你要生成的图像画面… (按 Ctrl+Enter 快捷生成)")
+                                        hintText: "Ctrl+Enter 快捷提交"
+                                        maxChars: 16000
+                                    }
                                 }
-                                Button { text: qsTr("取消"); enabled: root.busy && root.currentJobId.length > 0; onClicked: root.doCancel() }
-                                BusyIndicator { running: root.busy; visible: root.busy; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
-                                Item { Layout.fillWidth: true }
                             }
-                            Label { text: root.statusMessage; color: root.danger; visible: root.statusMessage.length > 0; wrapMode: Text.WordWrap }
+
+                            // 3. 模型与参数设置卡片
+                            AppCard {
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 10
+
+                                    // 模型选择行
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 4
+
+                                        Label {
+                                            text: qsTr("模型")
+                                            color: Theme.fgMuted
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeSm
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+
+                                            AppComboBox {
+                                                id: cbModel
+                                                Layout.fillWidth: true
+                                                editable: true
+                                                model: Models.models
+                                                Component.onCompleted: editText.text = "gpt-image-2"
+                                            }
+
+                                            BusyIndicator {
+                                                running: Models.loading
+                                                visible: Models.loading
+                                                Layout.preferredWidth: 20
+                                                Layout.preferredHeight: 20
+                                            }
+
+                                            AppIconButton {
+                                                text: "⟳"
+                                                toolTipText: qsTr("重新拉取该 Provider 的模型列表 (Ctrl+M 切模型)")
+                                                onClicked: Models.refresh(cbProvider.currentText)
+                                            }
+                                        }
+
+                                        Text {
+                                            visible: Models.error.length > 0
+                                            text: Models.error
+                                            color: Theme.danger
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeXs
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+
+                                    // 尺寸与张数行
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.gap
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 4
+                                            Label {
+                                                text: qsTr("尺寸")
+                                                color: Theme.fgMuted
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeSm
+                                            }
+                                            AppComboBox {
+                                                id: cbSize
+                                                Layout.fillWidth: true
+                                                editable: true
+                                                model: ["1024x1024", "1536x1024", "1024x1536", "auto"]
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.preferredWidth: 96
+                                            spacing: 4
+                                            Label {
+                                                text: qsTr("数量 (n)")
+                                                color: Theme.fgMuted
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeSm
+                                            }
+                                            SpinBox {
+                                                id: sbN
+                                                from: 1
+                                                to: 8
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 4. 参考图卡片 (图生图)
+                            AppCard {
+                                id: refCard
+                                Layout.fillWidth: true
+                                border.color: root.dropping ? Theme.accent : Theme.borderColor
+                                border.width: root.dropping ? 2 : 1
+                                implicitHeight: refCol.implicitHeight + 24
+
+                                ColumnLayout {
+                                    id: refCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 12
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            text: qsTr("参考图 (图生图)")
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSize
+                                            font.weight: Font.DemiBold
+                                            color: Theme.fg
+                                            Layout.fillWidth: true
+                                        }
+                                        AppStatusBadge {
+                                            visible: Jobs.referenceSources.length > 0
+                                            text: qsTr("%1 张参考图").arg(Jobs.referenceSources.length)
+                                            status: "running"
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.gapSm
+
+                                        AppButton {
+                                            text: qsTr("选择图片…")
+                                            onClicked: fileDialog.open()
+                                        }
+                                        AppButton {
+                                            text: qsTr("剪贴板粘贴")
+                                            onClicked: {
+                                                if (!Jobs.addReferenceFromClipboard()) {
+                                                    var e = Jobs.lastError()
+                                                    if (e.length > 0)
+                                                        root.showToast(e, "error")
+                                                }
+                                            }
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                        AppIconButton {
+                                            text: "🗑"
+                                            toolTipText: qsTr("清空所有参考图")
+                                            visible: Jobs.referenceSources.length > 0
+                                            onClicked: Jobs.clearReferences()
+                                        }
+                                    }
+
+                                    // Empty dashed placeholder
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 64
+                                        visible: Jobs.referenceSources.length === 0
+                                        radius: Theme.radiusSm
+                                        color: root.dropping ? Theme.accentSubtle : Theme.surfaceAlt
+                                        border.color: root.dropping ? Theme.accent : Theme.borderLight
+                                        border.width: 1
+
+                                        Column {
+                                            anchors.centerIn: parent
+                                            spacing: 2
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: "📥 " + qsTr("拖放图片至此，或直接 Ctrl+V 粘贴")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeSm
+                                                color: root.dropping ? Theme.accent : Theme.fgMuted
+                                            }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: qsTr("支持 PNG, JPEG, WebP, BMP (最多 16 张)")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeXs
+                                                color: Theme.fgSubtle
+                                            }
+                                        }
+                                    }
+
+                                    // Staged thumbnail flow
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        visible: Jobs.referenceSources.length > 0
+
+                                        Repeater {
+                                            model: Jobs.referenceSources
+                                            delegate: Rectangle {
+                                                width: 80
+                                                height: 80
+                                                radius: Theme.radiusSm
+                                                color: Theme.bg
+                                                border.color: Theme.borderColor
+                                                border.width: 1
+                                                clip: true
+
+                                                Image {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 2
+                                                    source: modelData
+                                                    sourceSize.width: 256
+                                                    fillMode: Image.PreserveAspectFit
+                                                    asynchronous: true
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: { Lightbox.model = Jobs.referenceSources; Lightbox.openAt(index) }
+                                                }
+
+                                                AppIconButton {
+                                                    anchors.top: parent.top
+                                                    anchors.right: parent.right
+                                                    anchors.margins: 2
+                                                    text: "×"
+                                                    toolTipText: qsTr("移除")
+                                                    onClicked: Jobs.removeReference(modelData)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                DropArea {
+                                    anchors.fill: parent
+                                    onEntered: (drag) => { if (drag.hasUrls) root.dropping = true }
+                                    onPositionChanged: (drag) => { if (drag.hasUrls) root.dropping = true }
+                                    onExited: root.dropping = false
+                                    onDropped: (drop) => {
+                                        root.dropping = false
+                                        if (drop.hasUrls) {
+                                            for (var i = 0; i < drop.urls.length; ++i)
+                                                root.stageReference(drop.urls[i].toString())
+                                            drop.acceptProposedAction()
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 5. 底部主控出图栏
+                            AppCard {
+                                Layout.fillWidth: true
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: Theme.gap
+
+                                    AppButton {
+                                        id: btnGenerate
+                                        variant: "primary"
+                                        Layout.fillWidth: true
+                                        implicitHeight: 40
+                                        text: root.busy ? qsTr("正在生成中…")
+                                              : (Jobs.referenceSources.length > 0 ? qsTr("🚀 立即图生图") : qsTr("🚀 立即生成"))
+                                        enabled: !root.busy && fPrompt.text.length > 0
+                                        onClicked: root.doGenerate()
+                                    }
+
+                                    AppButton {
+                                        variant: "danger"
+                                        implicitHeight: 40
+                                        text: qsTr("取消")
+                                        visible: root.busy && root.currentJobId.length > 0
+                                        onClicked: root.doCancel()
+                                    }
+
+                                    BusyIndicator {
+                                        running: root.busy
+                                        visible: root.busy
+                                        Layout.preferredWidth: 26
+                                        Layout.preferredHeight: 26
+                                    }
+                                }
+                            }
+
+                            Item { Layout.preferredHeight: 8 }
                         }
                     }
 
-                    Rectangle {
-                        id: refCard
+                    // 右侧自适应画廊与画布区域 (弹性拉伸)
+                    Item {
+                        id: galleryArea
                         Layout.fillWidth: true
-                        radius: root.radius
-                        color: root.surface
-                        border.color: root.dropping ? root.accent : root.borderColor
-                        border.width: root.dropping ? 2 : 1
-                        implicitHeight: refCol.implicitHeight + 24
+                        Layout.fillHeight: true
 
                         ColumnLayout {
-                            id: refCol
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.margins: 12
-                            spacing: root.gap
+                            anchors.fill: parent
+                            spacing: Theme.gap
 
-                            Text { text: qsTr("参考图 · 图生图（拖放 / 选择 / 粘贴，加入后自动切到编辑）"); color: root.fgMuted; font.pixelSize: 13 }
+                            // 画廊顶部信息条
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: root.gap
-                                Button {
-                                    text: qsTr("选择图片…")
-                                    onClicked: fileDialog.open()
+                                spacing: 8
+
+                                Text {
+                                    text: qsTr("生成画廊")
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeLg
+                                    font.bold: true
+                                    color: Theme.fg
                                 }
-                                Button {
-                                    text: qsTr("从剪贴板粘贴")
-                                    onClicked: {
-                                        if (!Jobs.addReferenceFromClipboard()) {
-                                            var e = Jobs.lastError()
-                                            if (e.length > 0)
-                                                root.statusMessage = e
-                                        }
-                                    }
+
+                                Text {
+                                    visible: results.count > 0
+                                    text: qsTr("· %1 张图像").arg(results.count)
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeSm
+                                    color: Theme.fgMuted
                                 }
-                                Button {
-                                    text: qsTr("清空")
-                                    visible: Jobs.referenceSources.length > 0
-                                    onClicked: Jobs.clearReferences()
-                                }
+
                                 Item { Layout.fillWidth: true }
+
+                                AppIconButton {
+                                    text: "🗑"
+                                    toolTipText: qsTr("清空当前生成结果画廊")
+                                    visible: results.count > 0
+                                    onClicked: results.clear()
+                                }
                             }
-                            Flow {
+
+                            // 画廊滚动视图
+                            ScrollView {
                                 Layout.fillWidth: true
-                                spacing: root.gap
-                                Repeater {
-                                    model: Jobs.referenceSources
-                                    delegate: Rectangle {
-                                        width: 96
-                                        height: 96
-                                        radius: root.radius
-                                        color: root.bg
-                                        border.color: root.borderColor
-                                        clip: true
-                                        Image {
-                                            anchors.fill: parent
-                                            anchors.margins: 2
-                                            source: modelData
-                                            sourceSize.width: 256
-                                            fillMode: Image.PreserveAspectFit
-                                            asynchronous: true
+                                Layout.fillHeight: true
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                ColumnLayout {
+                                    width: galleryArea.width - 12
+                                    spacing: Theme.gap
+
+                                    // 生成中微光骨架卡片 (Skeleton Card)
+                                    AppCard {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 180
+                                        visible: root.busy
+
+                                        SequentialAnimation on opacity {
+                                            running: root.busy
+                                            loops: Animation.Infinite
+                                            NumberAnimation { from: 1.0; to: 0.35; duration: 750; easing.type: Easing.InOutQuad }
+                                            NumberAnimation { from: 0.35; to: 1.0; duration: 750; easing.type: Easing.InOutQuad }
                                         }
-                                        // Click the reference body to preview it full-size in the lightbox; the ×
-                                        // Button stays declared after it (on top) so removal still wins.
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: { Lightbox.model = Jobs.referenceSources; Lightbox.openAt(index) }
-                                        }
-                                        Button {
-                                            anchors.top: parent.top
-                                            anchors.right: parent.right
-                                            width: 22
-                                            height: 22
-                                            text: "×"
-                                            onClicked: Jobs.removeReference(modelData)
+
+                                        ColumnLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 12
+
+                                            BusyIndicator {
+                                                running: root.busy
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.preferredWidth: 36
+                                                Layout.preferredHeight: 36
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: qsTr("AI 正在精心绘制图像，请稍候…")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize
+                                                font.weight: Font.Medium
+                                                color: Theme.fg
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: qsTr("任务已派发至模型服务端")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeXs
+                                                color: Theme.fgMuted
+                                            }
                                         }
                                     }
-                                }
-                            }
-                        }
 
-                        // Full-card drop overlay, declared LAST so it sits on top. A DropArea only
-                        // handles drag-and-drop events, so button and thumbnail clicks still reach
-                        // the items below it (verified on the real window). During a drag the whole
-                        // card lights up as the accepting surface; the highlight clears on exit/drop.
-                        DropArea {
-                            anchors.fill: parent
-                            onEntered: (drag) => { if (drag.hasUrls) root.dropping = true }
-                            onPositionChanged: (drag) => { if (drag.hasUrls) root.dropping = true }
-                            onExited: root.dropping = false
-                            onDropped: (drop) => {
-                                root.dropping = false
-                                if (drop.hasUrls) {
-                                    for (var i = 0; i < drop.urls.length; ++i)
-                                        root.stageReference(drop.urls[i].toString())
-                                    drop.acceptProposedAction()
+                                    // 空状态展示 (Empty State)
+                                    AppCard {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 280
+                                        visible: results.count === 0 && !root.busy
+
+                                        ColumnLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 10
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: "🎨"
+                                                font.pixelSize: 44
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: qsTr("尚未生成任何图片")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeLg
+                                                font.bold: true
+                                                color: Theme.fg
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: qsTr("在左侧输入生动的画面描述，或拖入参考图开启图生图创作")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeSm
+                                                color: Theme.fgMuted
+                                            }
+                                        }
+                                    }
+
+                                    // 自适应网格画廊
+                                    GridLayout {
+                                        id: galleryGrid
+                                        Layout.fillWidth: true
+                                        visible: results.count > 0
+                                        columns: Math.max(1, Math.floor((galleryArea.width - 24) / 224))
+                                        columnSpacing: Theme.gap
+                                        rowSpacing: Theme.gap
+
+                                        Repeater {
+                                            model: results
+                                            delegate: AppCard {
+                                                Layout.preferredWidth: Math.floor((galleryArea.width - 24 - (galleryGrid.columns - 1) * Theme.gap) / galleryGrid.columns)
+                                                Layout.preferredHeight: Layout.preferredWidth
+                                                clip: true
+                                                hoverable: true
+
+                                                Image {
+                                                    id: img
+                                                    anchors.fill: parent
+                                                    anchors.margins: 4
+                                                    source: model.url
+                                                    sourceSize.width: 512
+                                                    fillMode: Image.PreserveAspectFit
+                                                    asynchronous: true
+                                                }
+
+                                                BusyIndicator {
+                                                    anchors.centerIn: parent
+                                                    running: img.status === Image.Loading
+                                                    visible: running
+                                                }
+
+                                                // 悬停操作浮层
+                                                Rectangle {
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.bottom: parent.bottom
+                                                    height: 38
+                                                    color: Theme.dark ? "#e01a1a1e" : "#f0ffffff"
+                                                    visible: itemHover.containsMouse
+                                                    border.color: Theme.borderColor
+                                                    border.width: 1
+
+                                                    RowLayout {
+                                                        anchors.fill: parent
+                                                        anchors.leftMargin: 8
+                                                        anchors.rightMargin: 8
+                                                        spacing: 6
+
+                                                        AppIconButton {
+                                                            text: "🔍"
+                                                            toolTipText: qsTr("放大全屏查看 [Click]")
+                                                            onClicked: { Lightbox.model = root.collectResultUrls(); Lightbox.openAt(index) }
+                                                        }
+
+                                                        AppIconButton {
+                                                            text: "↺"
+                                                            toolTipText: qsTr("复用为图生图参考图")
+                                                            onClicked: {
+                                                                root.stageReference(model.url)
+                                                                root.showToast(qsTr("已添加至参考图队列"), "success")
+                                                            }
+                                                        }
+
+                                                        Item { Layout.fillWidth: true }
+
+                                                        AppIconButton {
+                                                            text: "⤓"
+                                                            toolTipText: qsTr("另存为…")
+                                                            onClicked: {
+                                                                Lightbox.model = root.collectResultUrls()
+                                                                Lightbox.openAt(index)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    id: itemHover
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: { Lightbox.model = root.collectResultUrls(); Lightbox.openAt(index) }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Item { Layout.preferredHeight: Theme.gapLg }
                                 }
                             }
                         }
                     }
-
-                    FileDialog {
-                        id: fileDialog
-                        title: qsTr("选择参考图")
-                        nameFilters: [qsTr("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp)"), qsTr("所有文件 (*)")]
-                        fileMode: FileDialog.OpenFiles
-                        onAccepted: {
-                            // Qt 6.8's QtQuick.Dialogs FileDialog exposes selectedFiles (a list of
-                            // urls) for multi-select -- NOT selectedUrls, which does not exist on this
-                            // type (its absence threw "ReferenceError" and silently dropped the picks).
-                            for (var i = 0; i < fileDialog.selectedFiles.length; ++i)
-                                root.stageReference(fileDialog.selectedFiles[i].toString())
-                        }
-                    }
-
-                    Label { text: qsTr("结果"); color: root.fgMuted; visible: results.count > 0; font.bold: true }
-                    GridLayout {
-                        columns: 3
-                        columnSpacing: root.gap
-                        rowSpacing: root.gap
-                        Layout.fillWidth: true
-                        Repeater {
-                            model: results
-                            delegate: Rectangle {
-                                Layout.preferredWidth: 200
-                                Layout.preferredHeight: 200
-                                radius: root.radius
-                                color: root.surface
-                                border.color: hover.containsMouse ? root.accent : root.borderColor
-                                border.width: hover.containsMouse ? 2 : 1
-                                clip: true
-                                Image {
-                                    id: img
-                                    anchors.fill: parent
-                                    anchors.margins: 2
-                                    source: model.url
-                                    sourceSize.width: 512
-                                    fillMode: Image.PreserveAspectFit
-                                    asynchronous: true
-                                }
-                                BusyIndicator {
-                                    anchors.centerIn: parent
-                                    running: img.status === Image.Loading
-                                    visible: running
-                                }
-                                MouseArea {
-                                    id: hover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: { Lightbox.model = root.collectResultUrls(); Lightbox.openAt(index) }
-                                }
-                            }
-                        }
-                    }
-                    Item { Layout.preferredHeight: root.gapLg }
                 }
             }
 
@@ -509,22 +971,93 @@ Window {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 16
-                    spacing: 8
+                    spacing: Theme.gap
 
-                    Label { text: qsTr("历史 · 跨重启保留（sqlite）"); color: root.fgMuted; font.bold: true }
-                    Label {
-                        visible: History.count === 0
-                        text: qsTr("还没有历史 · 去「生成」页出图")
-                        color: root.fgMuted
+                    // 历史视图顶部标题栏
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: qsTr("历史画廊")
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeLg
+                            font.bold: true
+                            color: Theme.fg
+                        }
+
+                        Text {
+                            text: qsTr("（已加载 %1 条记录 · SQLite 持久存储）").arg(History.count)
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeSm
+                            color: Theme.fgMuted
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        AppIconButton {
+                            text: "⟳"
+                            toolTipText: qsTr("重新刷新历史记录")
+                            onClicked: {
+                                History.refresh()
+                                root.showToast(qsTr("历史记录已刷新"), "info")
+                            }
+                        }
                     }
 
+                    // 空状态卡片
+                    AppCard {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 300
+                        visible: History.count === 0
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: 12
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: "📜"
+                                font.pixelSize: 44
+                            }
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("暂无任何历史任务")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeLg
+                                font.bold: true
+                                color: Theme.fg
+                            }
+
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("所有出图记录均会安全保存在本地 SQLite 数据库中")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSm
+                                color: Theme.fgMuted
+                            }
+
+                            Item { Layout.preferredHeight: 4 }
+
+                            AppButton {
+                                Layout.alignment: Qt.AlignHCenter
+                                variant: "primary"
+                                text: qsTr("前往「生成」页开始创作")
+                                onClicked: root.view = 0
+                            }
+                        }
+                    }
+
+                    // 历史网格列表
                     GridView {
                         id: histGrid
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        visible: History.count > 0
                         clip: true
-                        cellWidth: 224
-                        cellHeight: 320
+                        cellWidth: 236
+                        cellHeight: 310
                         boundsBehavior: Flickable.StopAtBounds
                         model: History
                         ScrollIndicator.vertical: ScrollIndicator { }
@@ -533,40 +1066,65 @@ Window {
                         delegate: Item {
                             width: histGrid.cellWidth
                             height: histGrid.cellHeight
-                            Rectangle {
+
+                            AppCard {
                                 anchors.fill: parent
                                 anchors.margins: 6
-                                radius: root.radius
-                                color: root.surface
-                                border.color: model.pinned ? root.accent : root.borderColor
-                                border.width: model.pinned ? 2 : 1
                                 clip: true
+                                hoverable: true
+                                border.color: model.pinned ? Theme.warning : (hovered ? Theme.accent : Theme.borderColor)
+                                border.width: model.pinned ? 2 : 1
 
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: 8
-                                    spacing: 4
+                                    spacing: 6
 
+                                    // 缩略图容器
                                     Rectangle {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: 150
-                                        radius: 6
-                                        color: root.bg
-                                        border.color: root.borderColor
+                                        Layout.preferredHeight: 140
+                                        radius: Theme.radiusSm
+                                        color: Theme.bg
+                                        border.color: Theme.borderColor
                                         clip: true
+
                                         Image {
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: model.thumbnail ? (root.relToUrl(model.thumbnail)) : ""
+                                            source: model.thumbnail ? root.relToUrl(model.thumbnail) : ""
                                             fillMode: Image.PreserveAspectFit
                                             asynchronous: true
                                         }
+
                                         Text {
                                             anchors.centerIn: parent
                                             visible: !model.thumbnail
                                             text: root.statusLabel(model.status || "")
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSize
                                             color: root.statusColor(model.status || "")
                                         }
+
+                                        // 置顶标记徽章 (Pinned Badge)
+                                        Rectangle {
+                                            anchors.top: parent.top
+                                            anchors.right: parent.right
+                                            anchors.margins: 4
+                                            width: 22
+                                            height: 22
+                                            radius: 11
+                                            color: Theme.warning
+                                            visible: !!model.pinned
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "★"
+                                                color: "#ffffff"
+                                                font.pixelSize: 12
+                                            }
+                                        }
+
                                         MouseArea {
                                             anchors.fill: parent
                                             enabled: !!model.thumbnail
@@ -578,62 +1136,104 @@ Window {
                                         }
                                     }
 
+                                    // 状态与模式标签行
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: 6
-                                        Text { text: root.statusLabel(model.status || ""); color: root.statusColor(model.status || ""); font.pixelSize: 12 }
-                                        Text { text: model.mode || ""; color: root.fgMuted; font.pixelSize: 11 }
+
+                                        AppStatusBadge {
+                                            status: model.status || ""
+                                        }
+
+                                        Text {
+                                            text: model.mode || ""
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeXs
+                                            color: Theme.fgMuted
+                                        }
+
                                         Item { Layout.fillWidth: true }
-                                        Text { visible: !!model.pinned; text: "★"; color: root.accent; font.pixelSize: 12 }
+
+                                        Text {
+                                            visible: !!model.durationMs
+                                            text: (model.durationMs / 1000).toFixed(1) + "s"
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeXs
+                                            color: Theme.fgSubtle
+                                        }
                                     }
+
+                                    // 提示词预览
                                     Text {
                                         Layout.fillWidth: true
                                         text: model.prompt || ""
-                                        color: root.fg
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeSm
+                                        color: Theme.fg
                                         elide: Text.ElideRight
                                         maximumLineCount: 2
                                         wrapMode: Text.Wrap
-                                        font.pixelSize: 12
                                     }
+
+                                    // 错误信息显示
                                     Text {
                                         visible: model.status === "failed" && !!model.error && model.error.length > 0
                                         text: model.error || ""
-                                        color: root.danger
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeXs
+                                        color: Theme.danger
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
-                                        font.pixelSize: 11
                                     }
+
                                     Item { Layout.fillHeight: true }
 
+                                    // 底部操作栏
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 4
-                                        ToolButton {
+                                        spacing: 2
+
+                                        AppIconButton {
                                             text: model.pinned ? "★" : "☆"
-                                            hoverEnabled: true
-                                            ToolTip.text: model.pinned ? qsTr("取消置顶") : qsTr("置顶")
-                                            ToolTip.visible: hovered
+                                            toolTipText: model.pinned ? qsTr("取消置顶") : qsTr("置顶此任务 (不受自动清理影响)")
+                                            customTextColor: model.pinned ? Theme.warning : Theme.fgMuted
                                             onClicked: History.pin(index, !model.pinned)
                                         }
-                                        ToolButton {
+
+                                        AppIconButton {
                                             text: "⟳"
-                                            hoverEnabled: true
-                                            ToolTip.text: qsTr("重试（图生图会还原参考图）")
-                                            ToolTip.visible: hovered
+                                            toolTipText: qsTr("以此参数重试出图 (图生图会自动还原参考图)")
                                             onClicked: {
                                                 if (Jobs.retryFromHistory(model.jobId || "") === "") {
                                                     var e = Jobs.lastError()
-                                                    if (e.length > 0) root.statusMessage = e
+                                                    if (e.length > 0) root.showToast(e, "error")
+                                                } else {
+                                                    root.showToast(qsTr("已重新提交出图任务"), "success")
+                                                    root.view = 0
                                                 }
                                             }
                                         }
+
+                                        AppIconButton {
+                                            text: "↺"
+                                            toolTipText: qsTr("将该出图设为新的图生图参考图")
+                                            visible: !!model.thumbnail
+                                            onClicked: {
+                                                root.stageReference(root.relToUrl(model.thumbnail))
+                                                root.showToast(qsTr("已加入图生图参考图"), "success")
+                                                root.view = 0
+                                            }
+                                        }
+
                                         Item { Layout.fillWidth: true }
-                                        ToolButton {
+
+                                        AppIconButton {
                                             text: "✕"
-                                            hoverEnabled: true
-                                            ToolTip.text: qsTr("删除")
-                                            ToolTip.visible: hovered
-                                            onClicked: History.removeAt(index)
+                                            toolTipText: qsTr("软删除该条记录")
+                                            onClicked: {
+                                                History.removeAt(index)
+                                                root.showToast(qsTr("已移除该历史记录"), "info")
+                                            }
                                         }
                                     }
                                 }
@@ -645,174 +1245,473 @@ Window {
             // ---------------- Settings (GUI-F) ----------------
             ScrollView {
                 clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
                 ColumnLayout {
-                    width: Math.min(root.width - 140, 760)
-                    x: 24
-                    spacing: root.gapLg
+                    width: Math.min(root.width - 120, 800)
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Theme.gapLg
 
-                    // ---- Profiles ----
-                    GroupBox {
+                    // ---- 1. Providers ----
+                    AppCard {
                         Layout.fillWidth: true
-                        label: Text { text: qsTr("模型供应商 Provider（多服务商快速切换）"); color: root.fgMuted; font.pixelSize: 13 }
                         ColumnLayout {
-                            width: parent.width
-                            spacing: 8
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 12
 
-                            Text { text: qsTr("已有 Provider"); color: root.fgMuted; font.pixelSize: 12; visible: Profiles.profiles.length > 0 }
-                            Repeater {
-                                model: Profiles.profiles
-                                delegate: RowLayout {
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: "🌐 " + qsTr("模型服务商配置 (Providers)")
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeLg
+                                    font.bold: true
+                                    color: Theme.fg
                                     Layout.fillWidth: true
-                                    spacing: 8
-                                    property var p: modelData
-                                    Text {
-                                        text: p.name + " · " + p.protocol + (p.hasCredential ? qsTr(" · 有密钥") : qsTr(" · 无密钥"))
-                                        color: root.fg; elide: Text.ElideRight; Layout.fillWidth: true
-                                    }
-                                    Button {
-                                        text: qsTr("编辑")
-                                        onClicked: {
-                                            root.editingName = p.name
-                                            eName.text = p.name; eName.enabled = false
-                                            eBase.text = p.baseUrl; root.setCombo(eProto, p.protocol)
-                                            eModel.text = p.imageModel; eTimeout.value = p.timeoutSeconds; eKey.text = ""
+                                }
+                                Text {
+                                    text: qsTr("已配置 %1 个服务商").arg(Profiles.profiles.length)
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeSm
+                                    color: Theme.fgMuted
+                                }
+                            }
+
+                            // 已配置服务商列表
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                visible: Profiles.profiles.length > 0
+
+                                Repeater {
+                                    model: Profiles.profiles
+                                    delegate: Rectangle {
+                                        Layout.fillWidth: true
+                                        implicitHeight: 46
+                                        radius: Theme.radiusSm
+                                        color: Theme.surfaceAlt
+                                        border.color: Theme.borderColor
+                                        border.width: 1
+                                        property var p: modelData
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 12
+                                            anchors.rightMargin: 10
+                                            spacing: 8
+
+                                            Text {
+                                                text: p.name
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize
+                                                font.bold: true
+                                                color: Theme.fg
+                                            }
+
+                                            AppStatusBadge {
+                                                text: p.protocol
+                                                status: "running"
+                                            }
+
+                                            Text {
+                                                text: p.hasCredential ? "🔑 " + qsTr("已存密钥") : "⚠️ " + qsTr("无密钥")
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeXs
+                                                color: p.hasCredential ? Theme.success : Theme.warning
+                                            }
+
+                                            Text {
+                                                text: p.baseUrl
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeXs
+                                                color: Theme.fgMuted
+                                                elide: Text.ElideMiddle
+                                                Layout.fillWidth: true
+                                            }
+
+                                            AppButton {
+                                                variant: "secondary"
+                                                implicitHeight: 28
+                                                text: qsTr("编辑")
+                                                onClicked: {
+                                                    root.editingName = p.name
+                                                    eName.text = p.name; eName.enabled = false
+                                                    eBase.text = p.baseUrl; root.setCombo(eProto, p.protocol)
+                                                    eModel.text = p.imageModel; eTimeout.value = p.timeoutSeconds; eKey.text = ""
+                                                }
+                                            }
+
+                                            AppButton {
+                                                variant: "secondary"
+                                                implicitHeight: 28
+                                                text: qsTr("设密钥")
+                                                onClicked: {
+                                                    root.editingName = p.name
+                                                    eName.text = p.name; eName.enabled = false
+                                                    eKey.focus = true
+                                                }
+                                            }
+
+                                            AppButton {
+                                                variant: "ghost"
+                                                implicitHeight: 28
+                                                text: qsTr("删密钥")
+                                                visible: p.hasCredential
+                                                onClicked: {
+                                                    Profiles.deleteCredential(p.name)
+                                                    root.showToast(qsTr("已从 Windows 凭据管理器删除密钥"), "info")
+                                                }
+                                            }
+
+                                            AppIconButton {
+                                                text: "✕"
+                                                toolTipText: qsTr("删除此服务商")
+                                                onClicked: {
+                                                    if (!Profiles.removeProfileByName(p.name))
+                                                        root.showToast(Profiles.lastError(), "error")
+                                                    else
+                                                        root.showToast(qsTr("已移除 Provider"), "info")
+                                                }
+                                            }
                                         }
-                                    }
-                                    Button { text: qsTr("设密钥"); onClicked: { root.editingName = p.name; eName.text = p.name; eName.enabled = false; eKey.focus = true } }
-                                    Button { text: qsTr("删除密钥"); visible: p.hasCredential; onClicked: Profiles.deleteCredential(p.name) }
-                                    Button {
-                                        text: qsTr("删除")
-                                        onClicked: { if (!Profiles.removeProfileByName(p.name)) root.statusMessage = Profiles.lastError() }
                                     }
                                 }
                             }
 
-                            // Editor (add or update-by-name).
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: Theme.borderColor
+                            }
+
+                            // Provider 编辑表单
+                            Text {
+                                text: root.editingName.length > 0 ? (qsTr("编辑服务商: ") + root.editingName) : qsTr("新增服务商")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize
+                                font.bold: true
+                                color: Theme.fg
+                            }
+
                             GridLayout {
                                 columns: 2
-                                columnSpacing: root.gap
-                                rowSpacing: 6
+                                columnSpacing: Theme.gap
+                                rowSpacing: 8
                                 Layout.fillWidth: true
-                                Label { text: qsTr("名称"); color: root.fgMuted }
-                                TextField { id: eName; Layout.fillWidth: true; placeholderText: qsTr("Provider 名") }
-                                Label { text: qsTr("Base URL"); color: root.fgMuted }
-                                TextField { id: eBase; Layout.fillWidth: true; placeholderText: "https://api.openai.com" }
-                                Label { text: qsTr("协议"); color: root.fgMuted }
-                                ComboBox { id: eProto; model: Profiles.protocols() }
-                                Label { text: qsTr("默认模型"); color: root.fgMuted }
-                                TextField { id: eModel; Layout.fillWidth: true }
-                                Label { text: qsTr("超时(秒)"); color: root.fgMuted }
-                                SpinBox { id: eTimeout; from: 0; to: 1800; value: 300; editable: true }
-                                Label { text: qsTr("API 密钥"); color: root.fgMuted }
-                                TextField { id: eKey; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: qsTr("留空则不改") }
+
+                                Label { text: qsTr("名称"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                AppTextField { id: eName; Layout.fillWidth: true; placeholderText: qsTr("服务商标识符，如 custom-openai") }
+
+                                Label { text: qsTr("Base URL"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                AppTextField { id: eBase; Layout.fillWidth: true; placeholderText: "https://api.openai.com" }
+
+                                Label { text: qsTr("协议类型"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                AppComboBox { id: eProto; Layout.fillWidth: true; model: Profiles.protocols() }
+
+                                Label { text: qsTr("默认模型"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                AppTextField { id: eModel; Layout.fillWidth: true; placeholderText: "gpt-image-2" }
+
+                                Label { text: qsTr("超时 (秒)"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                SpinBox { id: eTimeout; from: 0; to: 1800; value: 300; editable: true; Layout.fillWidth: true }
+
+                                Label { text: qsTr("API 密钥"); color: Theme.fgMuted; font.family: Theme.fontFamily }
+                                AppTextField { id: eKey; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: qsTr("留空则不修改原有已存凭据") }
                             }
+
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: root.gap
-                                Button {
-                                    text: root.editingName.length > 0 ? qsTr("保存修改") : qsTr("新增 Provider")
+                                spacing: Theme.gap
+
+                                AppButton {
+                                    variant: "primary"
+                                    text: root.editingName.length > 0 ? qsTr("保存修改") : qsTr("确认新增 Provider")
                                     enabled: eName.text.length > 0 && eBase.text.length > 0
                                     onClicked: {
                                         if (!Profiles.addProfile(eName.text, eBase.text, eProto.currentText, eModel.text, eTimeout.value)) {
-                                            root.statusMessage = Profiles.lastError(); return
+                                            root.showToast(Profiles.lastError(), "error"); return
                                         }
                                         if (eKey.text.length > 0 && !Profiles.setCredential(eName.text, eKey.text)) {
-                                            root.statusMessage = Profiles.lastError(); return
+                                            root.showToast(Profiles.lastError(), "error"); return
                                         }
+                                        root.showToast(qsTr("Provider 已保存"), "success")
                                         root.resetProfileEditor()
                                     }
                                 }
-                                Button { text: qsTr("取消"); visible: root.editingName.length > 0; onClicked: root.resetProfileEditor() }
+
+                                AppButton {
+                                    variant: "ghost"
+                                    text: qsTr("取消编辑")
+                                    visible: root.editingName.length > 0
+                                    onClicked: root.resetProfileEditor()
+                                }
+
                                 Item { Layout.fillWidth: true }
                             }
                         }
                     }
 
-                    // ---- Retention ----
-                    GroupBox {
+                    // ---- 2. Retention ----
+                    AppCard {
                         Layout.fillWidth: true
-                        label: Text { text: qsTr("历史保留与存储"); color: root.fgMuted; font.pixelSize: 13 }
                         ColumnLayout {
-                            width: parent.width
-                            spacing: 8
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 12
+
+                            Text {
+                                text: "💾 " + qsTr("存储空间与历史保留限制")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeLg
+                                font.bold: true
+                                color: Theme.fg
+                            }
+
+                            // 存储空间使用指示条
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text {
+                                        text: qsTr("本地已用空间: %1 MiB / %2 MiB").arg((Settings.usedBytes / (1024 * 1024)).toFixed(1)).arg(Math.round(Settings.retentionBytes / (1024 * 1024)))
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeSm
+                                        color: Theme.fg
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        readonly property real pct: (Settings.retentionBytes > 0) ? (Settings.usedBytes / Settings.retentionBytes * 100) : 0
+                                        text: pct.toFixed(1) + "%"
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeSm
+                                        font.bold: true
+                                        color: (pct > 85) ? Theme.danger : Theme.accent
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    height: 8
+                                    radius: 4
+                                    color: Theme.surfaceAlt
+                                    border.color: Theme.borderColor
+                                    border.width: 1
+
+                                    Rectangle {
+                                        height: parent.height
+                                        radius: 4
+                                        width: Math.min(parent.width, Math.max(0, parent.width * ((Settings.retentionBytes > 0) ? (Settings.usedBytes / Settings.retentionBytes) : 0)))
+                                        color: (width > parent.width * 0.85) ? Theme.danger : Theme.accent
+                                    }
+                                }
+                            }
+
                             GridLayout {
                                 columns: 2
-                                columnSpacing: root.gap
-                                rowSpacing: 6
+                                columnSpacing: Theme.gap
+                                rowSpacing: 8
                                 Layout.fillWidth: true
-                                Label { text: qsTr("最多保留任务数"); color: root.fgMuted }
+
+                                Label { text: qsTr("最多保留任务行数"); color: Theme.fgMuted; font.family: Theme.fontFamily }
                                 SpinBox {
-                                    id: sbRows; from: 1; to: 100000; editable: true
+                                    id: sbRows; from: 1; to: 100000; editable: true; Layout.fillWidth: true
                                     value: Settings.retentionRows
                                     onValueModified: Settings.retentionRows = value
                                 }
-                                Label { text: qsTr("存储上限 (MiB)"); color: root.fgMuted }
+
+                                Label { text: qsTr("存储空间上限 (MiB)"); color: Theme.fgMuted; font.family: Theme.fontFamily }
                                 SpinBox {
-                                    id: sbMiB; from: 64; to: 1024 * 1024; editable: true
+                                    id: sbMiB; from: 64; to: 1024 * 1024; editable: true; Layout.fillWidth: true
                                     value: Math.round(Settings.retentionBytes / (1024 * 1024))
                                     onValueModified: Settings.retentionBytes = value * 1024 * 1024
                                 }
                             }
+
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: root.gap
-                                Text { text: qsTr("已用:") + " " + (Settings.usedBytes / (1024 * 1024)).toFixed(1) + " MiB"; color: root.fgMuted }
-                                Item { Layout.fillWidth: true }
-                                Button {
-                                    text: qsTr("立即清理")
-                                    onClicked: { var n = Settings.applyRetention(); root.statusMessage = qsTr("已清理 %1 个任务").arg(n) }
-                                }
-                            }
-                            Text { text: qsTr("置顶(pinned)的任务不计入预算、不会被清理。"); color: root.fgMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                        }
-                    }
+                                spacing: Theme.gap
 
-                    // ---- Trusted hosts ----
-                    GroupBox {
-                        Layout.fillWidth: true
-                        label: Text { text: qsTr("可信主机（SSRF 例外 · 重启生效）"); color: root.fgMuted; font.pixelSize: 13 }
-                        ColumnLayout {
-                            width: parent.width
-                            spacing: 8
-                            Repeater {
-                                model: Settings.trustedHosts
-                                delegate: RowLayout {
+                                AppButton {
+                                    text: qsTr("立即执行配额清理")
+                                    onClicked: {
+                                        var n = Settings.applyRetention()
+                                        root.showToast(qsTr("清理完成，已回收 %1 个旧任务数据").arg(n), "info")
+                                    }
+                                }
+
+                                Text {
+                                    text: qsTr("注：置顶 (pinned ★) 的任务与资产不在清理范围之内。")
+                                    color: Theme.fgSubtle
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeXs
                                     Layout.fillWidth: true
-                                    spacing: 8
-                                    Text { text: modelData; color: root.fg; Layout.fillWidth: true }
-                                    Button { text: "✕"; onClicked: Settings.removeTrustedHost(modelData) }
                                 }
-                            }
-                            Text { visible: Settings.trustedHosts.length === 0; text: qsTr("（无）"); color: root.fgMuted }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: root.gap
-                                TextField { id: eHost; Layout.fillWidth: true; placeholderText: qsTr("仅主机名，如 gw.internal") }
-                                Button { text: qsTr("添加"); enabled: eHost.text.trim().length > 0; onClicked: { Settings.addTrustedHost(eHost.text); eHost.text = "" } }
                             }
                         }
                     }
 
-                    // ---- Theme + WebP ----
-                    GroupBox {
+                    // ---- 3. Trusted hosts ----
+                    AppCard {
                         Layout.fillWidth: true
-                        label: Text { text: qsTr("外观与格式"); color: root.fgMuted; font.pixelSize: 13 }
-                        RowLayout {
-                            width: parent.width
-                            spacing: root.gap
-                            Label { text: qsTr("浅色主题"); color: root.fgMuted }
-                            Switch {
-                                checked: Settings.themeName === "light"
-                                onToggled: Settings.themeName = checked ? "light" : "dark"
-                            }
-                            Item { Layout.fillWidth: true }
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 12
+
                             Text {
-                                text: qsTr("本机 Qt 无 WebP 解码插件：webp 结果会落盘但无法在应用内预览。")
-                                color: root.fgMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.maximumWidth: 360
+                                text: "🛡️ " + qsTr("可信网络主机 (SSRF 防护白名单 · 重启生效)")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeLg
+                                font.bold: true
+                                color: Theme.fg
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                visible: Settings.trustedHosts.length > 0
+
+                                Repeater {
+                                    model: Settings.trustedHosts
+                                    delegate: Rectangle {
+                                        height: 28
+                                        width: hostRow.implicitWidth + 16
+                                        radius: 14
+                                        color: Theme.surfaceAlt
+                                        border.color: Theme.borderColor
+                                        border.width: 1
+
+                                        RowLayout {
+                                            id: hostRow
+                                            anchors.centerIn: parent
+                                            spacing: 6
+
+                                            Text {
+                                                text: modelData
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeXs
+                                                color: Theme.fg
+                                            }
+
+                                            AppIconButton {
+                                                text: "✕"
+                                                implicitWidth: 18
+                                                implicitHeight: 18
+                                                toolTipText: qsTr("移除")
+                                                onClicked: {
+                                                    Settings.removeTrustedHost(modelData)
+                                                    root.showToast(qsTr("已从白名单移除主机"), "info")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                visible: Settings.trustedHosts.length === 0
+                                text: qsTr("（当前暂未配置任何额外受信任内网主机）")
+                                color: Theme.fgMuted
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSm
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.gap
+
+                                AppTextField {
+                                    id: eHost
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("输入允许访问的私有/内网域名或主机名，如 gw.internal")
+                                }
+
+                                AppButton {
+                                    variant: "primary"
+                                    text: qsTr("添加主机")
+                                    enabled: eHost.text.trim().length > 0
+                                    onClicked: {
+                                        Settings.addTrustedHost(eHost.text.trim())
+                                        root.showToast(qsTr("已添加至可信网络主机列表 (重启生效)"), "success")
+                                        eHost.text = ""
+                                    }
+                                }
                             }
                         }
                     }
-                    Item { Layout.preferredHeight: root.gapLg }
+
+                    // ---- 4. Theme & WebP ----
+                    AppCard {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 12
+
+                            Text {
+                                text: "🎨 " + qsTr("界面外观与格式说明")
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeLg
+                                font.bold: true
+                                color: Theme.fg
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.gap
+
+                                Label {
+                                    text: qsTr("切换浅色模式")
+                                    color: Theme.fg
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize
+                                }
+
+                                Switch {
+                                    checked: Settings.themeName === "light"
+                                    onToggled: Settings.themeName = checked ? "light" : "dark"
+                                }
+
+                                Text {
+                                    text: Settings.themeName === "light" ? "☀️ " + qsTr("当前为浅色调色板") : "🌙 " + qsTr("当前为深色暗夜调色板")
+                                    color: Theme.fgMuted
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeSm
+                                }
+
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: Theme.borderColor
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    text: "ℹ️"
+                                    font.pixelSize: 14
+                                }
+
+                                Text {
+                                    text: qsTr("说明：本机 Qt 未包含独立 WebP 解码动态库，WebP 格式图片仍可完整生成并安全落盘，在应用内无法直接解码时可通过灯箱按「O」键调用系统看图程序查看。")
+                                    color: Theme.fgSubtle
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeXs
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+                    }
+
+                    Item { Layout.preferredHeight: Theme.gapLg }
                 }
             }
         }
@@ -850,4 +1749,9 @@ Window {
 
     // GUI-D lightbox: binds to the Lightbox controller; opens when a result thumbnail is clicked.
     LightboxOverlay { }
+
+    // Modern floating toast notification banner
+    AppToast {
+        id: toast
+    }
 }
