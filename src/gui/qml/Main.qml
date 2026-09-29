@@ -196,7 +196,7 @@ Window {
                 anchors.bottomMargin: 16
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
-                spacing: 8
+                spacing: Theme.gapSm
 
                 // App Brand Icon
                 Rectangle {
@@ -211,7 +211,7 @@ Window {
                     Text {
                         anchors.centerIn: parent
                         text: "⚡"
-                        font.pixelSize: 20
+                        font.pixelSize: Theme.fontSizeLg
                     }
                 }
 
@@ -247,7 +247,7 @@ Window {
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: modelData.icon
-                                font.pixelSize: 18
+                                font.pixelSize: Theme.fontSize
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -283,7 +283,7 @@ Window {
             Item {
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: Theme.gapXl
                     spacing: Theme.gapLg
 
                     // 左侧控制台面板 (弹性 320~380px)
@@ -294,7 +294,7 @@ Window {
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                         ColumnLayout {
-                            width: parent.width - 12
+                            width: parent.width - Theme.scrollBarWidth
                             spacing: Theme.gap
 
                             // 1. 服务商与连接卡片 (可收起抽屉)
@@ -302,16 +302,16 @@ Window {
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 8
+                                    anchors.margins: Theme.gap
+                                    spacing: Theme.gapSm
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.gapSm
 
                                         Text {
                                             text: "🌐"
-                                            font.pixelSize: 14
+                                            font.pixelSize: Theme.fontSizeSm
                                         }
 
                                         Text {
@@ -340,7 +340,7 @@ Window {
                                     // 可折叠配置抽屉
                                     ColumnLayout {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.gapSm
                                         visible: root.providerDrawerOpen
 
                                         Rectangle {
@@ -417,8 +417,8 @@ Window {
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 8
+                                    anchors.margins: Theme.gap
+                                    spacing: Theme.gapSm
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -454,13 +454,13 @@ Window {
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 12
+                                    anchors.margins: Theme.gap
                                     spacing: 10
 
                                     // 模型选择行
                                     ColumnLayout {
                                         Layout.fillWidth: true
-                                        spacing: 4
+                                        spacing: Theme.gapSm / 2
 
                                         Label {
                                             text: qsTr("模型")
@@ -513,7 +513,7 @@ Window {
 
                                         ColumnLayout {
                                             Layout.fillWidth: true
-                                            spacing: 4
+                                            spacing: Theme.gapSm / 2
                                             Label {
                                                 text: qsTr("尺寸")
                                                 color: Theme.fgMuted
@@ -530,7 +530,7 @@ Window {
 
                                         ColumnLayout {
                                             Layout.preferredWidth: 96
-                                            spacing: 4
+                                            spacing: Theme.gapSm / 2
                                             Label {
                                                 text: qsTr("数量 (n)")
                                                 color: Theme.fgMuted
@@ -554,15 +554,15 @@ Window {
                                 Layout.fillWidth: true
                                 border.color: root.dropping ? Theme.accent : Theme.borderColor
                                 border.width: root.dropping ? 2 : 1
-                                implicitHeight: refCol.implicitHeight + 24
+                                implicitHeight: refCol.implicitHeight + Theme.gap * 2
 
                                 ColumnLayout {
                                     id: refCol
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.margins: 12
-                                    spacing: 8
+                                    anchors.margins: Theme.gap
+                                    spacing: Theme.gapSm
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -620,7 +620,7 @@ Window {
 
                                         Column {
                                             anchors.centerIn: parent
-                                            spacing: 2
+                                            spacing: Theme.gapXs
                                             Text {
                                                 anchors.horizontalCenter: parent.horizontalCenter
                                                 text: "📥 " + qsTr("拖放图片至此，或直接 Ctrl+V 粘贴")
@@ -641,7 +641,7 @@ Window {
                                     // Staged thumbnail flow
                                     Flow {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.gapSm
                                         visible: Jobs.referenceSources.length > 0
 
                                         Repeater {
@@ -657,7 +657,7 @@ Window {
 
                                                 Image {
                                                     anchors.fill: parent
-                                                    anchors.margins: 2
+                                                    anchors.margins: Theme.gapXs
                                                     source: modelData
                                                     sourceSize.width: 256
                                                     fillMode: Image.PreserveAspectFit
@@ -673,7 +673,7 @@ Window {
                                                 AppIconButton {
                                                     anchors.top: parent.top
                                                     anchors.right: parent.right
-                                                    anchors.margins: 2
+                                                    anchors.margins: Theme.gapXs
                                                     text: "×"
                                                     toolTipText: qsTr("移除")
                                                     onClicked: Jobs.removeReference(modelData)
@@ -752,7 +752,7 @@ Window {
                             // 画廊顶部信息条
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: Theme.gapSm
 
                                 Text {
                                     text: qsTr("生成画廊")
@@ -788,7 +788,7 @@ Window {
                                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                                 ColumnLayout {
-                                    width: galleryArea.width - 12
+                                    width: galleryArea.width - Theme.scrollBarWidth
                                     spacing: Theme.gap
 
                                     // 生成中微光骨架卡片 (Skeleton Card)
@@ -806,7 +806,7 @@ Window {
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
-                                            spacing: 12
+                                            spacing: Theme.gap
 
                                             BusyIndicator {
                                                 running: root.busy
@@ -847,7 +847,7 @@ Window {
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: "🎨"
-                                                font.pixelSize: 44
+                                                font.pixelSize: Theme.fontSizeHero
                                             }
 
                                             Text {
@@ -874,14 +874,14 @@ Window {
                                         id: galleryGrid
                                         Layout.fillWidth: true
                                         visible: results.count > 0
-                                        columns: Math.max(1, Math.floor((galleryArea.width - 24) / 224))
+                                        columns: Math.max(1, Math.floor((galleryArea.width - Theme.scrollBarWidth) / Theme.cardMinWidth))
                                         columnSpacing: Theme.gap
                                         rowSpacing: Theme.gap
 
                                         Repeater {
                                             model: results
                                             delegate: AppCard {
-                                                Layout.preferredWidth: Math.floor((galleryArea.width - 24 - (galleryGrid.columns - 1) * Theme.gap) / galleryGrid.columns)
+                                                Layout.preferredWidth: Math.floor((galleryArea.width - Theme.scrollBarWidth - (galleryGrid.columns - 1) * Theme.gap) / galleryGrid.columns)
                                                 Layout.preferredHeight: Layout.preferredWidth
                                                 clip: true
                                                 hoverable: true
@@ -889,7 +889,7 @@ Window {
                                                 Image {
                                                     id: img
                                                     anchors.fill: parent
-                                                    anchors.margins: 4
+                                                    anchors.margins: Theme.gapSm / 2
                                                     source: model.url
                                                     sourceSize.width: 512
                                                     fillMode: Image.PreserveAspectFit
@@ -970,13 +970,13 @@ Window {
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: Theme.gapXl
                     spacing: Theme.gap
 
                     // 历史视图顶部标题栏
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.gapSm
 
                         Text {
                             text: qsTr("历史画廊")
@@ -1013,12 +1013,12 @@ Window {
 
                         ColumnLayout {
                             anchors.centerIn: parent
-                            spacing: 12
+                            spacing: Theme.gap
 
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: "📜"
-                                font.pixelSize: 44
+                                font.pixelSize: Theme.fontSizeHero
                             }
 
                             Text {
@@ -1077,7 +1077,7 @@ Window {
 
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 8
+                                    anchors.margins: Theme.gapSm
                                     spacing: 6
 
                                     // 缩略图容器
@@ -1091,7 +1091,7 @@ Window {
 
                                         Image {
                                             anchors.fill: parent
-                                            anchors.margins: 2
+                                            anchors.margins: Theme.gapXs
                                             source: model.thumbnail ? root.relToUrl(model.thumbnail) : ""
                                             fillMode: Image.PreserveAspectFit
                                             asynchronous: true
@@ -1110,7 +1110,7 @@ Window {
                                         Rectangle {
                                             anchors.top: parent.top
                                             anchors.right: parent.right
-                                            anchors.margins: 4
+                                            anchors.margins: Theme.gapSm / 2
                                             width: 22
                                             height: 22
                                             radius: 11
@@ -1121,7 +1121,7 @@ Window {
                                                 anchors.centerIn: parent
                                                 text: "★"
                                                 color: "#ffffff"
-                                                font.pixelSize: 12
+                                                font.pixelSize: Theme.fontSizeXs
                                             }
                                         }
 
@@ -1191,7 +1191,7 @@ Window {
                                     // 底部操作栏
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 2
+                                        spacing: Theme.gapXs
 
                                         AppIconButton {
                                             text: model.pinned ? "★" : "☆"
@@ -1257,8 +1257,8 @@ Window {
                         Layout.fillWidth: true
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
+                            anchors.margins: Theme.gapXl
+                            spacing: Theme.gap
 
                             RowLayout {
                                 Layout.fillWidth: true
@@ -1281,7 +1281,7 @@ Window {
                             // 已配置服务商列表
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: Theme.gapSm
                                 visible: Profiles.profiles.length > 0
 
                                 Repeater {
@@ -1299,7 +1299,7 @@ Window {
                                             anchors.fill: parent
                                             anchors.leftMargin: 12
                                             anchors.rightMargin: 10
-                                            spacing: 8
+                                            spacing: Theme.gapSm
 
                                             Text {
                                                 text: p.name
@@ -1456,8 +1456,8 @@ Window {
                         Layout.fillWidth: true
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
+                            anchors.margins: Theme.gapXl
+                            spacing: Theme.gap
 
                             Text {
                                 text: "💾 " + qsTr("存储空间与历史保留限制")
@@ -1470,7 +1470,7 @@ Window {
                             // 存储空间使用指示条
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 4
+                                spacing: Theme.gapSm / 2
 
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -1557,8 +1557,8 @@ Window {
                         Layout.fillWidth: true
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
+                            anchors.margins: Theme.gapXl
+                            spacing: Theme.gap
 
                             Text {
                                 text: "🛡️ " + qsTr("可信网络主机 (SSRF 防护白名单 · 重启生效)")
@@ -1570,7 +1570,7 @@ Window {
 
                             Flow {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: Theme.gapSm
                                 visible: Settings.trustedHosts.length > 0
 
                                 Repeater {
@@ -1647,8 +1647,8 @@ Window {
                         Layout.fillWidth: true
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
+                            anchors.margins: Theme.gapXl
+                            spacing: Theme.gap
 
                             Text {
                                 text: "🎨 " + qsTr("界面外观与格式说明")
@@ -1692,11 +1692,11 @@ Window {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: Theme.gapSm
 
                                 Text {
                                     text: "ℹ️"
-                                    font.pixelSize: 14
+                                    font.pixelSize: Theme.fontSizeSm
                                 }
 
                                 Text {

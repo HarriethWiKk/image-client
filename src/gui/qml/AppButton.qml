@@ -11,7 +11,7 @@ Button {
     property real customRadius: Theme.radiusSm
     property alias labelFont: textItem.font
 
-    implicitHeight: 34
+    implicitHeight: Theme.touchTargetMin
     implicitWidth: Math.max(76, textItem.implicitWidth + 24)
     padding: 0
     hoverEnabled: true

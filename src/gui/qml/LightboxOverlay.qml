@@ -90,7 +90,7 @@ Popup {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 48
+            height: Theme.topBarHeight
             color: Theme.dark ? "#881a1a1e" : "#ccffffff"
             border.color: Theme.borderColor
             border.width: 1

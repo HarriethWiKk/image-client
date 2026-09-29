@@ -34,19 +34,24 @@ TextField {
     }
 
     // Optional clear button
-    Text {
+    Item {
         anchors.right: parent.right
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
+        width: Theme.touchTargetMin
+        height: Theme.touchTargetMin
         visible: control.showClearButton && control.text.length > 0 && control.enabled
-        text: "✕"
-        font.pixelSize: 11
-        color: clearMouse.containsMouse ? Theme.fg : Theme.fgMuted
+
+        Text {
+            anchors.centerIn: parent
+            text: "✕"
+            font.pixelSize: 11
+            color: clearMouse.containsMouse ? Theme.fg : Theme.fgMuted
+        }
 
         MouseArea {
             id: clearMouse
             anchors.fill: parent
-            anchors.margins: -4
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {

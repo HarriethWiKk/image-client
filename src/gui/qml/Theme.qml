@@ -44,9 +44,17 @@ QtObject {
     readonly property real radiusSm: 6
     readonly property real radius: 10
     readonly property real radiusLg: 14
+    readonly property real gapXs: 2
     readonly property real gapSm: 8
     readonly property real gap: 12
     readonly property real gapLg: 20
+    readonly property real gapXl: 16
+
+    // Layout constants
+    readonly property real scrollBarWidth: 12
+    readonly property real cardMinWidth: 224
+    readonly property real topBarHeight: 48
+    readonly property real touchTargetMin: 44
 
     // Typography
     readonly property string fontFamily: "Segoe UI, -apple-system, PingFang SC, Microsoft YaHei, sans-serif"
@@ -55,6 +63,7 @@ QtObject {
     readonly property int fontSize: 13
     readonly property int fontSizeLg: 15
     readonly property int fontSizeXl: 18
+    readonly property int fontSizeHero: 44
 
     // Durations
     readonly property int animFast: 120
