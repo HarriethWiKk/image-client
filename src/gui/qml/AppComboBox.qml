@@ -25,7 +25,22 @@ ComboBox {
         }
     }
 
-    contentItem: control.editable ? control.editText : textItem
+    contentItem: control.editable ? editItem : textItem
+
+    // ComboBox.editText is a QString, not the editor -- the editable contentItem must be a real
+    // Item, and must write back to editText so a typed value reaches currentText (doGenerate reads it).
+    TextField {
+        id: editItem
+        leftPadding: 2
+        rightPadding: control.indicator ? (control.indicator.width + 6) : 20
+        text: control.editText
+        onTextChanged: control.editText = text
+        font: control.font
+        color: control.enabled ? Theme.fg : Theme.fgMuted
+        verticalAlignment: TextInput.AlignVCenter
+        background: null
+        visible: control.editable
+    }
 
     Text {
         id: textItem
