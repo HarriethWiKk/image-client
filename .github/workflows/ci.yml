@@ -49,6 +49,12 @@ jobs:
         shell: cmd
         run: scripts\build.cmd
 
+      # qmllint catches the "property does not exist on this type" class (e.g. reading .text
+      # off ComboBox.editText) before it reaches a build. Needs the qmldir the build generates.
+      - name: Lint QML
+        shell: pwsh
+        run: scripts\lint.ps1
+
       - name: Test
         shell: cmd
         run: |

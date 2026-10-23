@@ -43,6 +43,14 @@ scripts\test.cmd
 
 等价于在 vcvars64 + Qt `bin` 环境下执行 `ctest --test-dir build --output-on-failure`。Qt 的 `bin` 必须在 `PATH` 上，测试进程需要加载 `Qt6Test.dll` 等运行库。
 
+## 静态检查
+
+```powershell
+scripts\lint.ps1
+```
+
+对 QML 模块跑 `qmllint`。源目录没有 `qmldir`（构建时生成），脚本会把源码和构建产物里的类型清单拼成一个临时模块再检查，否则 `Theme` / `StatusMap` 会被当成普通类型，报出大量假的 missing-property。当前过滤 `[unqualified]`——控制器还是 context property，qmllint 无法给它们类型；等它们注册成 QML singleton 后应去掉这条过滤。
+
 ## 运行
 
 ```bat
