@@ -89,14 +89,23 @@ Window {
         return root.fgMuted
     }
 
+    // Editable combos keep typed text in editText; currentText only follows a selected item and
+    // stays empty for a value that is not in the model. Every read of a user-editable combo goes
+    // through this helper.
+    function comboText(combo) {
+        return combo.editText.length > 0 ? combo.editText : combo.currentText
+    }
+
     // Actions shared by the buttons and the keyboard shortcuts (SPEC 9.1: 生成 / 取消 / 切模型).
     function doGenerate() {
         if (busy || fPrompt.text.length === 0)
             return
-        var sz = cbSize.editText ? cbSize.editText.text : cbSize.currentText
+        var provider = root.comboText(cbProvider)
+        var model = root.comboText(cbModel)
+        var sz = root.comboText(cbSize)
         var id = Jobs.referenceSources.length > 0
-            ? Jobs.generateEdit(cbProvider.currentText, cbModel.currentText, fPrompt.text, sz, sbN.value, "")
-            : Jobs.generateJob(cbProvider.currentText, cbModel.currentText, fPrompt.text, sz, sbN.value, "")
+            ? Jobs.generateEdit(provider, model, fPrompt.text, sz, sbN.value, "")
+            : Jobs.generateJob(provider, model, fPrompt.text, sz, sbN.value, "")
         if (!id)
             statusMessage = Jobs.lastError()
     }
@@ -124,7 +133,7 @@ Window {
             fBase.text = d.baseUrl
             root.setCombo(cbProto, d.protocol)
             if (d.imageModel && d.imageModel.length > 0)
-                cbModel.editText.text = d.imageModel
+                cbModel.editText = d.imageModel
         }
         Models.refresh(name)
     }
@@ -137,7 +146,7 @@ Window {
     function cycleProvider() {
         if (cbProvider.count > 0) {
             cbProvider.currentIndex = (cbProvider.currentIndex + 1) % cbProvider.count
-            selectProvider(cbProvider.currentText)
+            selectProvider(root.comboText(cbProvider))
         } else {
             statusMessage = qsTr("还没有可切换的 Provider")
         }
@@ -153,7 +162,9 @@ Window {
             var e = Jobs.lastError()
             if (e.length > 0)
                 statusMessage = e
+            return false
         }
+        return true
     }
 
     Connections {
@@ -323,7 +334,10 @@ Window {
                                         }
 
                                         Text {
-                                            text: cbProvider.currentText ? cbProvider.currentText : qsTr("选择 Provider")
+                                            text: {
+                                                var name = root.comboText(cbProvider)
+                                                return name.length > 0 ? name : qsTr("选择 Provider")
+                                            }
                                             font.family: Theme.fontFamily
                                             font.pixelSize: Theme.fontSize
                                             font.bold: true
@@ -353,7 +367,7 @@ Window {
 
                                         Rectangle {
                                             Layout.fillWidth: true
-                                            height: 1
+                                            Layout.preferredHeight: 1
                                             color: Theme.borderColor
                                         }
 
@@ -368,12 +382,18 @@ Window {
                                                 textRole: "name"
                                                 onActivated: root.selectProvider(currentText)
                                                 Component.onCompleted: {
+                                                    // Prefer "default" when it exists, otherwise the first
+                                                    // configured provider. Leaving the picker empty made every
+                                                    // other setup open on "未找到 Provider「」".
                                                     var idx = -1
                                                     for (var i = 0; i < model.length; ++i)
                                                         if (model[i].name === "default") { idx = i; break }
-                                                    if (idx >= 0) currentIndex = idx
-                                                    else { currentIndex = -1; editText.text = "default" }
-                                                    root.selectProvider(currentText)
+                                                    if (idx < 0 && model.length > 0)
+                                                        idx = 0
+                                                    if (idx >= 0) {
+                                                        currentIndex = idx
+                                                        root.selectProvider(currentText)
+                                                    }
                                                 }
                                             }
                                             AppTextField {
@@ -402,16 +422,16 @@ Window {
                                                 variant: "primary"
                                                 text: qsTr("保存")
                                                 onClicked: {
-                                                    if (!Profiles.addProfile(cbProvider.currentText, fBase.text, cbProto.currentText, cbModel.currentText, 0)) {
+                                                    if (!Profiles.addProfile(root.comboText(cbProvider), fBase.text, cbProto.currentText, root.comboText(cbModel), 0)) {
                                                         root.showToast(Profiles.lastError(), "error")
                                                         return
                                                     }
-                                                    if (fKey.text.length > 0 && !Profiles.setCredential(cbProvider.currentText, fKey.text)) {
+                                                    if (fKey.text.length > 0 && !Profiles.setCredential(root.comboText(cbProvider), fKey.text)) {
                                                         root.showToast(Profiles.lastError(), "error")
                                                         return
                                                     }
                                                     root.showToast(qsTr("已成功保存 Provider 配置"), "success")
-                                                    Models.refresh(cbProvider.currentText)
+                                                    Models.refresh(root.comboText(cbProvider))
                                                     root.providerDrawerOpen = false
                                                 }
                                             }
@@ -496,7 +516,7 @@ Window {
                                                 Layout.fillWidth: true
                                                 editable: true
                                                 model: Models.models
-                                                Component.onCompleted: editText.text = "gpt-image-2"
+                                                Component.onCompleted: if (editText.length === 0) editText = "gpt-image-2"
                                             }
 
                                             BusyIndicator {
@@ -509,7 +529,7 @@ Window {
                                             AppIconButton {
                                                 text: "⟳"
                                                 toolTipText: qsTr("重新拉取该 Provider 的模型列表 (Ctrl+M 切模型)")
-                                                onClicked: Models.refresh(cbProvider.currentText)
+                                                onClicked: Models.refresh(root.comboText(cbProvider))
                                             }
                                         }
 
@@ -955,8 +975,8 @@ Window {
                                                             text: "↺"
                                                             toolTipText: qsTr("复用为图生图参考图")
                                                             onClicked: {
-                                                                root.stageReference(model.url)
-                                                                root.showToast(qsTr("已添加至参考图队列"), "success")
+                                                                if (root.stageReference(model.url))
+                                                                    root.showToast(qsTr("已添加至参考图队列"), "success")
                                                             }
                                                         }
 
@@ -1245,9 +1265,10 @@ Window {
                                             toolTipText: qsTr("将该出图设为新的图生图参考图")
                                             visible: !!model.thumbnail
                                             onClicked: {
-                                                root.stageReference(root.relToUrl(model.thumbnail))
-                                                root.showToast(qsTr("已加入图生图参考图"), "success")
-                                                root.view = 0
+                                                if (root.stageReference(root.relToUrl(model.thumbnail))) {
+                                                    root.showToast(qsTr("已加入图生图参考图"), "success")
+                                                    root.view = 0
+                                                }
                                             }
                                         }
 
@@ -1257,8 +1278,11 @@ Window {
                                             text: "✕"
                                             toolTipText: qsTr("软删除该条记录")
                                             onClicked: {
-                                                History.removeAt(index)
+                                                // Toast first: removeAt() drops the row and tears down this
+                                                // delegate's context, so a later root.* lookup throws
+                                                // "ReferenceError: root is not defined".
                                                 root.showToast(qsTr("已移除该历史记录"), "info")
+                                                History.removeAt(index)
                                             }
                                         }
                                     }
@@ -1417,7 +1441,7 @@ Window {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                height: 1
+                                Layout.preferredHeight: 1
                                 color: Theme.borderColor
                             }
 
@@ -1534,7 +1558,7 @@ Window {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    height: 8
+                                    Layout.preferredHeight: 8
                                     radius: 4
                                     color: Theme.surfaceAlt
                                     border.color: Theme.borderColor
@@ -1737,7 +1761,7 @@ Window {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                height: 1
+                                Layout.preferredHeight: 1
                                 color: Theme.borderColor
                             }
 
@@ -1796,6 +1820,21 @@ Window {
         sequence: "Ctrl+H"
         enabled: !Lightbox.open
         onActivated: root.view = 1
+    }
+
+    // Reference intake: the multi-select picker behind "选择图片…". The dialog itself was lost
+    // in the Theme refactor while the call site survived, so the button threw ReferenceError.
+    FileDialog {
+        id: fileDialog
+        title: qsTr("选择参考图")
+        nameFilters: [qsTr("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp)"), qsTr("所有文件 (*)")]
+        fileMode: FileDialog.OpenFiles
+        onAccepted: {
+            // Qt 6.8's QtQuick.Dialogs FileDialog exposes selectedFiles (a list of urls) for
+            // multi-select -- NOT selectedUrls, which does not exist on this type.
+            for (var i = 0; i < fileDialog.selectedFiles.length; ++i)
+                root.stageReference(fileDialog.selectedFiles[i].toString())
+        }
     }
 
     // GUI-D lightbox: binds to the Lightbox controller; opens when a result thumbnail is clicked.
