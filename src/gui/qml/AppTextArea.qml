@@ -14,6 +14,9 @@ Rectangle {
     property int maxChars: 0
     property string hintText: ""
 
+    implicitWidth: 200
+    implicitHeight: 110
+
     color: Theme.surfaceAlt
     radius: Theme.radiusSm
     border.color: textArea.activeFocus ? Theme.accent : (mouseArea.containsMouse ? Theme.borderLight : Theme.borderColor)

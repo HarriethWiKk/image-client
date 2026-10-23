@@ -286,22 +286,30 @@ Window {
                     anchors.margins: Theme.gapXl
                     spacing: Theme.gapLg
 
-                    // 左侧控制台面板 (弹性 320~380px)
+                    // 左侧控制台面板 (稳定 360px 宽度，各卡片自适应内部内容高度)
                     ScrollView {
-                        Layout.preferredWidth: Math.min(380, Math.max(320, parent.width * 0.35))
+                        Layout.preferredWidth: 360
+                        Layout.minimumWidth: 320
+                        Layout.maximumWidth: 420
                         Layout.fillHeight: true
                         clip: true
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                         ColumnLayout {
-                            width: parent.width - Theme.scrollBarWidth
-                            spacing: Theme.gap
+                            width: parent ? (parent.width - 12) : 348
+                            spacing: 14
 
                             // 1. 服务商与连接卡片 (可收起抽屉)
                             AppCard {
                                 Layout.fillWidth: true
+                                implicitHeight: provCol.implicitHeight + 24
+
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: provCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: Theme.gap
                                     spacing: Theme.gapSm
 
@@ -415,8 +423,13 @@ Window {
                             // 2. 提示词卡片 (Prompt)
                             AppCard {
                                 Layout.fillWidth: true
+                                implicitHeight: promptCol.implicitHeight + 24
+
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: promptCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: Theme.gap
                                     spacing: Theme.gapSm
 
@@ -441,7 +454,7 @@ Window {
                                     AppTextArea {
                                         id: fPrompt
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: 110
+                                        Layout.preferredHeight: 120
                                         placeholderText: qsTr("描述你要生成的图像画面… (按 Ctrl+Enter 快捷生成)")
                                         hintText: "Ctrl+Enter 快捷提交"
                                         maxChars: 16000
@@ -452,10 +465,15 @@ Window {
                             // 3. 模型与参数设置卡片
                             AppCard {
                                 Layout.fillWidth: true
+                                implicitHeight: paramCol.implicitHeight + 24
+
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: paramCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: Theme.gap
-                                    spacing: Theme.gap
+                                    spacing: 10
 
                                     // 模型选择行
                                     ColumnLayout {
@@ -702,9 +720,14 @@ Window {
                             // 5. 底部主控出图栏
                             AppCard {
                                 Layout.fillWidth: true
+                                implicitHeight: actionRow.implicitHeight + 20
+
                                 RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.gapSm
+                                    id: actionRow
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 10
                                     spacing: Theme.gap
 
                                     AppButton {
@@ -786,9 +809,10 @@ Window {
                                 Layout.fillHeight: true
                                 clip: true
                                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                                 ColumnLayout {
-                                    width: galleryArea.width - Theme.scrollBarWidth
+                                    width: parent ? (parent.width - 12) : 500
                                     spacing: Theme.gap
 
                                     // 生成中微光骨架卡片 (Skeleton Card)
@@ -874,14 +898,16 @@ Window {
                                         id: galleryGrid
                                         Layout.fillWidth: true
                                         visible: results.count > 0
-                                        columns: Math.max(1, Math.floor((galleryArea.width - Theme.scrollBarWidth) / Theme.cardMinWidth))
+                                        readonly property real availWidth: Math.max(240, (parent ? parent.width : galleryArea.width) - 16)
+                                        columns: Math.max(1, Math.floor(availWidth / 220))
                                         columnSpacing: Theme.gap
                                         rowSpacing: Theme.gap
 
                                         Repeater {
                                             model: results
                                             delegate: AppCard {
-                                                Layout.preferredWidth: Math.floor((galleryArea.width - Theme.scrollBarWidth - (galleryGrid.columns - 1) * Theme.gap) / galleryGrid.columns)
+                                                readonly property real itemWidth: Math.floor((galleryGrid.availWidth - (galleryGrid.columns - 1) * Theme.gap) / galleryGrid.columns)
+                                                Layout.preferredWidth: Math.max(160, itemWidth)
                                                 Layout.preferredHeight: Layout.preferredWidth
                                                 clip: true
                                                 hoverable: true
@@ -1244,20 +1270,30 @@ Window {
             }
             // ---------------- Settings (GUI-F) ----------------
             ScrollView {
+                id: settingsScroll
                 clip: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                 ColumnLayout {
-                    width: Math.min(root.width - 120, 800)
-                    Layout.alignment: Qt.AlignHCenter
+                    id: settingsCol
+                    width: Math.min(Math.max(400, settingsScroll.width - 48), 800)
+                    x: Math.max(16, (settingsScroll.width - width) / 2)
                     spacing: Theme.gapLg
+
+                    Item { Layout.preferredHeight: Theme.gap }
 
                     // ---- 1. Providers ----
                     AppCard {
                         Layout.fillWidth: true
+                        implicitHeight: setProvCol.implicitHeight + 32
+
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.gapXl
+                            id: setProvCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 16
                             spacing: Theme.gap
 
                             RowLayout {
@@ -1454,9 +1490,14 @@ Window {
                     // ---- 2. Retention ----
                     AppCard {
                         Layout.fillWidth: true
+                        implicitHeight: setRetCol.implicitHeight + 32
+
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.gapXl
+                            id: setRetCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 16
                             spacing: Theme.gap
 
                             Text {
@@ -1555,9 +1596,14 @@ Window {
                     // ---- 3. Trusted hosts ----
                     AppCard {
                         Layout.fillWidth: true
+                        implicitHeight: setHostCol.implicitHeight + 32
+
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.gapXl
+                            id: setHostCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 16
                             spacing: Theme.gap
 
                             Text {
@@ -1645,9 +1691,14 @@ Window {
                     // ---- 4. Theme & WebP ----
                     AppCard {
                         Layout.fillWidth: true
+                        implicitHeight: setThemeCol.implicitHeight + 32
+
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.gapXl
+                            id: setThemeCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 16
                             spacing: Theme.gap
 
                             Text {
