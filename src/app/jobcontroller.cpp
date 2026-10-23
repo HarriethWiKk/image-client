@@ -145,8 +145,28 @@ QString JobController::addReferencePath(const QString &urlOrPath)
         m_lastError = QStringLiteral("最多 %1 张参考图").arg(oic::limits::kMaxEditReferenceImages);
         return {};
     }
-    const QUrl url(urlOrPath);
-    const QString path = url.isLocalFile() ? url.toLocalFile() : urlOrPath;
+
+    // The gallery and history hand back image://asset/<rel> URLs, which are not filesystem
+    // paths; resolve those through the asset store. Everything else keeps the old behaviour:
+    // file:// URLs and plain local paths.
+    static const QString kAssetPrefix = QStringLiteral("image://asset/");
+    QString path;
+    if (urlOrPath.startsWith(kAssetPrefix)) {
+        if (m_backend == nullptr) {
+            m_lastError = QStringLiteral("后端未就绪");
+            return {};
+        }
+        const QString relPath =
+            QUrl::fromPercentEncoding(urlOrPath.mid(kAssetPrefix.size()).toUtf8());
+        path = m_backend->assetAbsolutePath(relPath);
+        if (path.isEmpty()) {
+            m_lastError = m_backend->lastError();
+            return {};
+        }
+    } else {
+        const QUrl url(urlOrPath);
+        path = url.isLocalFile() ? url.toLocalFile() : urlOrPath;
+    }
 
     QByteArray bytes;
     QString readError;

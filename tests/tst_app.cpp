@@ -129,6 +129,7 @@ private slots:
     void retryResubmitsGenerateJob();
     void retryRestoresEditReferences();
     void addReferenceRejectsNonImage();
+    void addReferenceAcceptsAssetUrl();
     void generateEditWithoutReferenceFails();
     void jobControllerWrapperSurfacesError();
     void profileControllerInvokables();
@@ -406,6 +407,33 @@ void TstApp::addReferenceRejectsNonImage()
     const QString ghost = QDir(dir.path()).filePath(QStringLiteral("ghost.png"));
     QVERIFY2(jobs.addReferencePath(ghost).isEmpty(), "a missing file must be rejected");
     QVERIFY(!jobs.lastError().isEmpty());
+}
+
+void TstApp::addReferenceAcceptsAssetUrl()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const oic::store::Paths paths = tempPaths(dir);
+    Backend backend;
+    QString error;
+    QVERIFY2(backend.initWithPaths(paths, stubDeps(paths.database, paths.assets), &error), qPrintable(error));
+
+    // The gallery and history hand image://asset/<rel> URLs back to the controller; they must
+    // resolve through the asset store instead of being treated as literal file names.
+    const QString rel = QStringLiteral("job-1/result.png");
+    QVERIFY(writePng(QDir(paths.assets).filePath(rel), 8, 4));
+
+    JobController jobs(&backend);
+    const QString source = jobs.addReferencePath(QStringLiteral("image://asset/") + rel);
+    QVERIFY2(!source.isEmpty(), qPrintable(jobs.lastError()));
+    QCOMPARE(jobs.referenceCount(), 1);
+    QVERIFY2(source.startsWith(QStringLiteral("file://")), qPrintable(source));
+
+    // An asset URL that does not resolve is rejected, not staged as a broken reference.
+    QVERIFY2(jobs.addReferencePath(QStringLiteral("image://asset/job-1/missing.png")).isEmpty(),
+             "a missing asset must be rejected");
+    QVERIFY(!jobs.lastError().isEmpty());
+    QCOMPARE(jobs.referenceCount(), 1);
 }
 
 void TstApp::generateEditWithoutReferenceFails()
