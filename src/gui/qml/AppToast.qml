@@ -57,11 +57,11 @@ Rectangle {
     states: [
         State {
             name: "visible"
-            PropertyChanges { target: toast; y: 24; opacity: 1.0 }
+            PropertyChanges { toast.y: 24; toast.opacity: 1.0 }
         },
         State {
             name: "hidden"
-            PropertyChanges { target: toast; y: -toast.height - 20; opacity: 0.0 }
+            PropertyChanges { toast.y: -toast.height - 20; toast.opacity: 0.0 }
         }
     ]
 
