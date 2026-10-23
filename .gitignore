@@ -1,8 +1,31 @@
+# Build output
 build/
+out/
 .qtc/
-*.user
 .cache/
 compile_commands.json
+CMakeUserPresets.json
+
+# IDE / editor state
+.vs/
+.vscode/
+.idea/
+*.user
+
+# Local runtime output
+*.log
+*.pdb
+*.ilk
+*.exp
+*.tmp
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
 
 # 天枢运行时状态（知识库 / meridian db / artifacts）—— 本地生成，不入库
 .rivet/
+
+# 本机 agent 工作区（记忆 / 缓存）—— 本地生成，不入库
+.workbuddy-ai/

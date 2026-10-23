@@ -1,0 +1,17 @@
+# Normalize text on commit; the working tree keeps its platform line endings.
+* text=auto
+
+# Batch files are parsed by cmd.exe, which expects CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+
+# Binary assets: never diff, never normalize.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.lib  binary
