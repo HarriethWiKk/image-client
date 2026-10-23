@@ -3,15 +3,17 @@
 qt_add_executable(ImageClient WIN32 main.cpp)
 
 # Must precede qt_add_qml_module: CMake reads this property while generating the
-# module's qmldir. Set after the call, Theme is emitted as a plain type and every
-# `Theme.*` binding resolves against the type name -> undefined.
-set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+# module's qmldir. Set after the call, the singletons are emitted as plain types and
+# every `Theme.*` / `StatusMap.*` binding resolves against the type name -> undefined.
+set_source_files_properties(qml/Theme.qml qml/StatusMap.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(ImageClient
     URI App
     VERSION 1.0
     QML_FILES
         qml/Theme.qml
+        qml/StatusMap.qml
         qml/AppCard.qml
         qml/AppButton.qml
         qml/AppIconButton.qml

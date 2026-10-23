@@ -75,20 +75,6 @@ Window {
         return urls
     }
 
-    function statusLabel(s) {
-        if (s === "succeeded") return qsTr("成功")
-        if (s === "failed") return qsTr("失败")
-        if (s === "cancelled") return qsTr("已取消")
-        if (s === "running") return qsTr("生成中")
-        if (s === "queued") return qsTr("排队")
-        return s
-    }
-    function statusColor(s) {
-        if (s === "succeeded") return root.accent
-        if (s === "failed") return root.danger
-        return root.fgMuted
-    }
-
     // Editable combos keep typed text in editText; currentText only follows a selected item and
     // stays empty for a value that is not in the model. Every read of a user-editable combo goes
     // through this helper.
@@ -308,13 +294,13 @@ Window {
                         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                         ColumnLayout {
-                            width: parent ? (parent.width - 12) : 348
+                            width: parent ? (parent.width - Theme.scrollBarWidth) : 348
                             spacing: 14
 
                             // 1. 服务商与连接卡片 (可收起抽屉)
                             AppCard {
                                 Layout.fillWidth: true
-                                implicitHeight: provCol.implicitHeight + 24
+                                implicitHeight: provCol.implicitHeight + Theme.gap * 2
 
                                 ColumnLayout {
                                     id: provCol
@@ -443,7 +429,7 @@ Window {
                             // 2. 提示词卡片 (Prompt)
                             AppCard {
                                 Layout.fillWidth: true
-                                implicitHeight: promptCol.implicitHeight + 24
+                                implicitHeight: promptCol.implicitHeight + Theme.gap * 2
 
                                 ColumnLayout {
                                     id: promptCol
@@ -475,7 +461,7 @@ Window {
                                         id: fPrompt
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 120
-                                        placeholderText: qsTr("描述你要生成的图像画面… (按 Ctrl+Enter 快捷生成)")
+                                        placeholderText: qsTr("描述你要生成的图像画面…")
                                         hintText: "Ctrl+Enter 快捷提交"
                                         maxChars: 16000
                                     }
@@ -485,7 +471,7 @@ Window {
                             // 3. 模型与参数设置卡片
                             AppCard {
                                 Layout.fillWidth: true
-                                implicitHeight: paramCol.implicitHeight + 24
+                                implicitHeight: paramCol.implicitHeight + Theme.gap * 2
 
                                 ColumnLayout {
                                     id: paramCol
@@ -740,7 +726,7 @@ Window {
                             // 5. 底部主控出图栏
                             AppCard {
                                 Layout.fillWidth: true
-                                implicitHeight: actionRow.implicitHeight + 20
+                                implicitHeight: actionRow.implicitHeight + Theme.gapLg
 
                                 RowLayout {
                                     id: actionRow
@@ -832,7 +818,7 @@ Window {
                                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                                 ColumnLayout {
-                                    width: parent ? (parent.width - 12) : 500
+                                    width: parent ? (parent.width - Theme.scrollBarWidth) : 500
                                     spacing: Theme.gap
 
                                     // 生成中微光骨架卡片 (Skeleton Card)
@@ -919,7 +905,7 @@ Window {
                                         Layout.fillWidth: true
                                         visible: results.count > 0
                                         readonly property real availWidth: Math.max(240, (parent ? parent.width : galleryArea.width) - 16)
-                                        columns: Math.max(1, Math.floor(availWidth / 220))
+                                        columns: Math.max(1, Math.floor(availWidth / Theme.cardMinWidth))
                                         columnSpacing: Theme.gap
                                         rowSpacing: Theme.gap
 
@@ -1146,10 +1132,10 @@ Window {
                                         Text {
                                             anchors.centerIn: parent
                                             visible: !model.thumbnail
-                                            text: root.statusLabel(model.status || "")
+                                            text: StatusMap.label(model.status || "")
                                             font.family: Theme.fontFamily
                                             font.pixelSize: Theme.fontSize
-                                            color: root.statusColor(model.status || "")
+                                            color: StatusMap.color(model.status || "")
                                         }
 
                                         // 置顶标记徽章 (Pinned Badge)
@@ -1310,7 +1296,7 @@ Window {
                     // ---- 1. Providers ----
                     AppCard {
                         Layout.fillWidth: true
-                        implicitHeight: setProvCol.implicitHeight + 32
+                        implicitHeight: setProvCol.implicitHeight + Theme.gapXl * 2
 
                         ColumnLayout {
                             id: setProvCol
@@ -1514,7 +1500,7 @@ Window {
                     // ---- 2. Retention ----
                     AppCard {
                         Layout.fillWidth: true
-                        implicitHeight: setRetCol.implicitHeight + 32
+                        implicitHeight: setRetCol.implicitHeight + Theme.gapXl * 2
 
                         ColumnLayout {
                             id: setRetCol
@@ -1620,7 +1606,7 @@ Window {
                     // ---- 3. Trusted hosts ----
                     AppCard {
                         Layout.fillWidth: true
-                        implicitHeight: setHostCol.implicitHeight + 32
+                        implicitHeight: setHostCol.implicitHeight + Theme.gapXl * 2
 
                         ColumnLayout {
                             id: setHostCol
@@ -1715,7 +1701,7 @@ Window {
                     // ---- 4. Theme & WebP ----
                     AppCard {
                         Layout.fillWidth: true
-                        implicitHeight: setThemeCol.implicitHeight + 32
+                        implicitHeight: setThemeCol.implicitHeight + Theme.gapXl * 2
 
                         ColumnLayout {
                             id: setThemeCol

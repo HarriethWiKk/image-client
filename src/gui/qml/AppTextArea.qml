@@ -26,10 +26,6 @@ Rectangle {
         ColorAnimation { duration: Theme.animFast }
     }
 
-    function forceActiveFocus() {
-        textArea.forceActiveFocus()
-    }
-
     MouseArea {
         id: mouseArea
         anchors.fill: parent

@@ -57,7 +57,9 @@ QtObject {
     readonly property real touchTargetMin: 44
 
     // Typography
-    readonly property string fontFamily: "Segoe UI, -apple-system, PingFang SC, Microsoft YaHei, sans-serif"
+    // Qt's font.family takes a single family name, not a CSS font stack: the old
+    // comma-separated string never matched and silently fell back to the default font.
+    readonly property string fontFamily: "Microsoft YaHei UI"
     readonly property int fontSizeXs: 11
     readonly property int fontSizeSm: 12
     readonly property int fontSize: 13

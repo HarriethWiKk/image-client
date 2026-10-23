@@ -8,31 +8,9 @@ Rectangle {
     property string status: ""
     property string text: ""
 
-    readonly property string displayLabel: {
-        if (text.length > 0) return text
-        if (status === "succeeded") return qsTr("成功")
-        if (status === "failed") return qsTr("失败")
-        if (status === "cancelled") return qsTr("已取消")
-        if (status === "running") return qsTr("生成中")
-        if (status === "queued") return qsTr("排队")
-        return status
-    }
-
-    readonly property color statusColor: {
-        if (status === "succeeded") return Theme.success
-        if (status === "failed") return Theme.danger
-        if (status === "running") return Theme.accent
-        if (status === "queued") return Theme.warning
-        return Theme.fgMuted
-    }
-
-    readonly property color statusBg: {
-        if (status === "succeeded") return Theme.successSubtle
-        if (status === "failed") return Theme.dangerSubtle
-        if (status === "running") return Theme.accentSubtle
-        if (status === "queued") return Theme.warningSubtle
-        return Theme.surfaceAlt
-    }
+    readonly property string displayLabel: text.length > 0 ? text : StatusMap.label(status)
+    readonly property color statusColor: StatusMap.color(status)
+    readonly property color statusBg: StatusMap.background(status)
 
     implicitHeight: 22
     implicitWidth: rowLayout.implicitWidth + 16
