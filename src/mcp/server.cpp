@@ -2,14 +2,14 @@
 // Copyright 2026 HarriethWiKk
 #include "oic/mcp/server.h"
 
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
-#include <QFile>
+#include <QUuid>
 
 #include <cstdio>
-
-#include "oic/mcp/tools.h"
+#include <utility>
 
 namespace oic::mcp {
 namespace {
@@ -47,27 +47,75 @@ QByteArray serialize(const QJsonObject &response)
     return QJsonDocument(response).toJson(QJsonDocument::Compact);
 }
 
-}  // namespace
-
-QByteArray Server::handleLine(const QByteArray &line)
+QJsonObject toolText(const QString &text, bool isError)
 {
+    QJsonObject content;
+    content.insert(QStringLiteral("type"), QStringLiteral("text"));
+    content.insert(QStringLiteral("text"), text);
+
+    QJsonObject result;
+    result.insert(QStringLiteral("content"), QJsonArray{content});
+    result.insert(QStringLiteral("isError"), isError);
+    return result;
+}
+
+struct ParsedLine {
+    bool blank = false;
+    bool ok = false;
+    QJsonObject request;
+    QJsonObject errorResponse;
+};
+
+ParsedLine parseLine(const QByteArray &line)
+{
+    ParsedLine parsed;
     const QByteArray trimmed = line.trimmed();
     if (trimmed.isEmpty()) {
-        return {};
+        parsed.blank = true;
+        return parsed;
     }
 
     QJsonParseError parseError{};
     const QJsonDocument document = QJsonDocument::fromJson(trimmed, &parseError);
     if (parseError.error != QJsonParseError::NoError) {
-        return serialize(makeError(QJsonValue(QJsonValue::Null), kParseError,
-                                   QStringLiteral("Parse error: %1").arg(parseError.errorString())));
+        parsed.errorResponse = makeError(
+            QJsonValue(QJsonValue::Null), kParseError,
+            QStringLiteral("Parse error: %1").arg(parseError.errorString()));
+        return parsed;
     }
     if (!document.isObject()) {
-        return serialize(makeError(QJsonValue(QJsonValue::Null), kInvalidRequest,
-                                   QStringLiteral("Invalid Request: expected a JSON object")));
+        parsed.errorResponse =
+            makeError(QJsonValue(QJsonValue::Null), kInvalidRequest,
+                      QStringLiteral("Invalid Request: expected a JSON object"));
+        return parsed;
     }
 
-    const std::optional<QJsonObject> response = handle(document.object());
+    parsed.ok = true;
+    parsed.request = document.object();
+    return parsed;
+}
+
+}  // namespace
+
+Server::Server(ToolHost host) : m_host(std::move(host)) {}
+
+Server::~Server()
+{
+    cancelAll();
+    joinWorkers();
+}
+
+QByteArray Server::handleLine(const QByteArray &line)
+{
+    const ParsedLine parsed = parseLine(line);
+    if (parsed.blank) {
+        return {};
+    }
+    if (!parsed.ok) {
+        return serialize(parsed.errorResponse);
+    }
+
+    const std::optional<QJsonObject> response = handle(parsed.request);
     return response ? serialize(*response) : QByteArray{};
 }
 
@@ -78,7 +126,6 @@ std::optional<QJsonObject> Server::handle(const QJsonObject &request)
 
     const QJsonValue methodValue = request.value(QStringLiteral("method"));
     if (!methodValue.isString()) {
-        // A malformed notification gets no reply; a request does.
         if (notification) {
             return std::nullopt;
         }
@@ -92,8 +139,22 @@ std::optional<QJsonObject> Server::handle(const QJsonObject &request)
         }
         return initialize(id, request.value(QStringLiteral("params")).toObject());
     }
-    // initialized / cancelled are notifications by definition: never answer, even if a client
-    // mistakenly sends an id.
+
+    // Cancellation is the one notification with an effect: it flips the token of the matching
+    // in-flight call (SPEC 8.1).
+    if (method == QLatin1String("notifications/cancelled")) {
+        const QString key = idKey(request.value(QStringLiteral("params"))
+                                      .toObject()
+                                      .value(QStringLiteral("requestId")));
+        if (!key.isEmpty()) {
+            std::lock_guard<std::mutex> lock(m_tokensMutex);
+            const auto it = m_byRequest.find(key);
+            if (it != m_byRequest.end()) {
+                it->second->cancel();
+            }
+        }
+        return std::nullopt;
+    }
     if (method.startsWith(QLatin1String("notifications/"))) {
         return std::nullopt;
     }
@@ -110,7 +171,7 @@ std::optional<QJsonObject> Server::handle(const QJsonObject &request)
         return makeResult(id, result);
     }
     if (method == QLatin1String("tools/call")) {
-        return toolsCall(id, request.value(QStringLiteral("params")).toObject());
+        return dispatchToolCall(id, request.value(QStringLiteral("params")).toObject());
     }
     return makeError(id, kMethodNotFound, QStringLiteral("Method not found: %1").arg(method));
 }
@@ -141,7 +202,7 @@ QJsonObject Server::initialize(const QJsonValue &id, const QJsonObject &params) 
     return makeResult(id, result);
 }
 
-QJsonObject Server::toolsCall(const QJsonValue &id, const QJsonObject &params) const
+QJsonObject Server::dispatchToolCall(const QJsonValue &id, const QJsonObject &params)
 {
     const QString name = params.value(QStringLiteral("name")).toString();
     if (name.isEmpty()) {
@@ -151,17 +212,78 @@ QJsonObject Server::toolsCall(const QJsonValue &id, const QJsonObject &params) c
         return makeError(id, kInvalidParams, QStringLiteral("Unknown tool: %1").arg(name));
     }
 
-    // Milestone 1 is the protocol surface only. Report the missing handler as a tool error
-    // (isError), not as a protocol error: the tool exists and the request was well formed.
-    QJsonObject text;
-    text.insert(QStringLiteral("type"), QStringLiteral("text"));
-    text.insert(QStringLiteral("text"),
-                QStringLiteral("tool '%1' is not implemented in this build yet").arg(name));
+    const QJsonObject args = params.value(QStringLiteral("arguments")).toObject();
+    if (name == QLatin1String("cancel_job")) {
+        return cancelJob(id, args);
+    }
 
-    QJsonObject result;
-    result.insert(QStringLiteral("content"), QJsonArray{text});
-    result.insert(QStringLiteral("isError"), true);
-    return makeResult(id, result);
+    const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const ToolReply reply = executeTool(name, args, jobId, nullptr, m_host);
+    if (reply.protocolError) {
+        return makeError(id, kInvalidParams, reply.error);
+    }
+    return makeResult(id, reply.result);
+}
+
+QJsonObject Server::cancelJob(const QJsonValue &id, const QJsonObject &args)
+{
+    const QString jobId = args.value(QStringLiteral("job_id")).toString().trimmed();
+    if (jobId.isEmpty()) {
+        return makeError(id, kInvalidParams, QStringLiteral("Invalid params: job_id is required"));
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_tokensMutex);
+        const auto it = m_byJobId.find(jobId);
+        if (it != m_byJobId.end()) {
+            it->second->cancel();
+            return makeResult(id, toolText(QStringLiteral("cancellation requested"), false));
+        }
+    }
+
+    if (!m_host.job) {
+        return makeResult(id, toolText(QStringLiteral("tool host is not configured"), true));
+    }
+    QString error;
+    bool found = false;
+    const store::Job job = m_host.job(jobId, &found, &error);
+    if (!error.isEmpty()) {
+        return makeResult(id, toolText(error, true));
+    }
+    if (!found) {
+        return makeResult(id, toolText(QStringLiteral("job not found: %1").arg(jobId), true));
+    }
+    return makeResult(
+        id, toolText(QStringLiteral("job is not running (status: %1)").arg(job.status), false));
+}
+
+void Server::startJob(const QJsonObject &request, const QString &tool)
+{
+    const QJsonValue id = request.value(QStringLiteral("id"));
+    const QString requestKey = idKey(id);
+    const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto token = std::make_shared<jobs::CancelToken>();
+
+    {
+        std::lock_guard<std::mutex> lock(m_tokensMutex);
+        m_byJobId[jobId] = token;
+        m_byRequest[requestKey] = token;
+    }
+
+    const QJsonObject args =
+        request.value(QStringLiteral("params")).toObject().value(QStringLiteral("arguments")).toObject();
+
+    std::lock_guard<std::mutex> lock(m_workersMutex);
+    m_workers.emplace_back([this, id, requestKey, jobId, token, tool, args]() {
+        const ToolReply reply = executeTool(tool, args, jobId, token.get(), m_host);
+        {
+            std::lock_guard<std::mutex> guard(m_tokensMutex);
+            m_byJobId.erase(jobId);
+            m_byRequest.erase(requestKey);
+        }
+        writeFrame(reply.protocolError ? makeError(id, kInvalidParams, reply.error)
+                                       : makeResult(id, reply.result));
+    });
 }
 
 int Server::run()
@@ -170,23 +292,95 @@ int Server::run()
     if (!input.open(stdin, QIODevice::ReadOnly)) {
         return 1;
     }
+    return run(&input, [](const QByteArray &frame) {
+        std::fwrite(frame.constData(), 1, static_cast<size_t>(frame.size()), stdout);
+        std::fflush(stdout);
+    });
+}
 
-    while (!input.atEnd()) {
-        const QByteArray line = input.readLine();
-        const QByteArray response = handleLine(line);
-        if (response.isEmpty()) {
+int Server::run(QIODevice *input, std::function<void(const QByteArray &)> write)
+{
+    if (input == nullptr) {
+        return 1;
+    }
+    m_write = std::move(write);
+
+    while (!input->atEnd()) {
+        const QByteArray line = input->readLine();
+        const ParsedLine parsed = parseLine(line);
+        if (parsed.blank) {
             continue;
         }
-        // Write through the CRT handle whose binary mode main() sets. QFile would reopen the
-        // descriptor and turn every LF into CRLF, which breaks the line-delimited framing.
-        const QByteArray frame = response + '\n';
-        if (std::fwrite(frame.constData(), 1, static_cast<size_t>(frame.size()), stdout)
-            != static_cast<size_t>(frame.size())) {
-            return 1;
+        if (!parsed.ok) {
+            writeFrame(parsed.errorResponse);
+            continue;
         }
-        std::fflush(stdout);
+
+        const QJsonObject request = parsed.request;
+        const QString method = request.value(QStringLiteral("method")).toString();
+        const QJsonObject params = request.value(QStringLiteral("params")).toObject();
+        const QString tool = params.value(QStringLiteral("name")).toString();
+        const bool hasId = !request.value(QStringLiteral("id")).isUndefined();
+
+        // Long-running tools get a worker so the reader can still see notifications/cancelled
+        // and cancel_job while the job is in flight.
+        if (hasId && method == QLatin1String("tools/call")
+            && (tool == QLatin1String("generate_image") || tool == QLatin1String("edit_image"))) {
+            startJob(request, tool);
+            continue;
+        }
+
+        const std::optional<QJsonObject> response = handle(request);
+        if (response) {
+            writeFrame(*response);
+        }
     }
+
+    cancelAll();
+    joinWorkers();
     return 0;
+}
+
+void Server::writeFrame(const QJsonObject &response)
+{
+    const QByteArray frame = serialize(response) + '\n';
+    std::lock_guard<std::mutex> lock(m_writeMutex);
+    if (m_write) {
+        m_write(frame);
+    }
+}
+
+void Server::cancelAll()
+{
+    std::lock_guard<std::mutex> lock(m_tokensMutex);
+    for (auto &entry : m_byJobId) {
+        entry.second->cancel();
+    }
+}
+
+void Server::joinWorkers()
+{
+    std::vector<std::thread> workers;
+    {
+        std::lock_guard<std::mutex> lock(m_workersMutex);
+        workers.swap(m_workers);
+    }
+    for (std::thread &worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+}
+
+QString Server::idKey(const QJsonValue &id)
+{
+    if (id.isString()) {
+        return QStringLiteral("s:") + id.toString();
+    }
+    if (id.isDouble()) {
+        return QStringLiteral("n:") + QString::number(id.toDouble(), 'g', 17);
+    }
+    return {};
 }
 
 }  // namespace oic::mcp

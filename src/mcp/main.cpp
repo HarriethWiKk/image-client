@@ -11,6 +11,7 @@
 
 #include "oic/core/endpoints.h"
 #include "oic/mcp/server.h"
+#include "oic/store/paths.h"
 
 int main(int argc, char *argv[])
 {
@@ -45,6 +46,20 @@ int main(int argc, char *argv[])
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
-    oic::mcp::Server server;
+    oic::store::Paths paths = oic::store::resolvePaths();
+    QString pathError;
+    if (!paths.ok()) {
+        pathError = paths.error;
+    } else if (!oic::store::ensureDirectories(&paths)) {
+        pathError = paths.error;
+    }
+    if (!pathError.isEmpty()) {
+        QTextStream err(stderr);
+        err << "image-client-mcp: " << pathError << '\n';
+        err.flush();
+        return 1;
+    }
+
+    oic::mcp::Server server(oic::mcp::makeDefaultToolHost(paths));
     return server.run();
 }
