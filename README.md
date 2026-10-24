@@ -7,8 +7,8 @@ Windows 桌面图像生成客户端：C++20 + QML（Qt 6.8.3）。支持 OpenAI 
 ## 当前状态
 
 - **GUI**（`ImageClient.exe`）：生成、图生图、历史、设置、灯箱已实现。
-- **MCP**（`image-client-mcp.exe`）：目前只有 `--version` / `--smoke`，stdio 协议与工具集尚未实现（SPEC §8）。
-- **测试**：17 个套件。`tst_store` 的并发写、`tst_jobmanager` 的并发上限、`tst_assets` 的目录 ACL 三个用例在本机失败，前两个稳定复现，待查。
+- **MCP**（`image-client-mcp.exe`）：stdio JSON-RPC 传输、`initialize` / `ping` / `tools/list` 已实现，五个工具的 schema 已按 SPEC §8.2 冻结；`tools/call` 的处理函数尚未接上（返回 `isError`），资源接口在下一里程碑。
+- **测试**：18 个套件。`tst_store` 的并发写、`tst_jobmanager` 的并发上限、`tst_assets` 的目录 ACL 三个用例在本机失败，前两个稳定复现，待查。
 
 ## 环境要求
 
@@ -62,6 +62,15 @@ scripts\run.cmd
 - `library.sqlite3` —— 任务与历史
 - `assets\` —— 生成图片
 - `gui.log` —— GUI 运行日志（stderr 仍同步输出）
+
+MCP 服务端走 stdio，一条消息一行：
+
+```bat
+set "PATH=%QTDIR%\bin;%PATH%"
+echo {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}} | build\image-client-mcp.exe
+```
+
+`--version` / `--smoke` 仍可用于快速检查二进制。stdout 只输出协议帧，诊断一律走 stderr。
 
 ## 目录结构
 

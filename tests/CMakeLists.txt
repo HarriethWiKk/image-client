@@ -40,6 +40,11 @@ oic_add_test(tst_jobmanager tst_jobmanager.cpp)
 # jobs <-> real net::Transport over loopback: proves the seam does not bypass SSRF/pinning.
 oic_add_test(tst_jobs_integration tst_jobs_integration.cpp)
 
+# MCP stdio protocol surface: line-delimited JSON-RPC framing, initialize / ping /
+# tools/list, and the error paths a client hits before any tool handler exists.
+oic_add_test(tst_mcp tst_mcp.cpp)
+target_link_libraries(tst_mcp PRIVATE oic-mcp)
+
 # gui-side oic-app foundation (Backend + AssetImageProvider); links oic-app, which pulls
 # Qt Gui/Quick for QImage/QImageReader.
 qt_add_executable(tst_app tst_app.cpp)
