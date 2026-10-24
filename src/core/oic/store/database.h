@@ -104,6 +104,7 @@ public:
     bool softDeleteJob(const QString &id, qint64 when, QString *error);
 
     bool addAsset(const Asset &asset, QString *error);
+    Asset asset(const QString &id, bool *found, QString *error) const;
     QList<Asset> assetsForJob(const QString &jobId, QString *error) const;
     QList<Asset> allAssets(QString *error) const;
 

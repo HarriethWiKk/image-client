@@ -14,6 +14,13 @@
 
 namespace oic::mcp {
 
+inline constexpr const char *kServerName = "image-client-mcp";
+inline constexpr const char *kServerVersion = "0.1.0";
+
+// Protocol versions from SPEC 8.1: 2026-07-28 is the target, 2025-06-18 the floor.
+inline constexpr const char *kProtocolLatest = "2026-07-28";
+inline constexpr const char *kProtocolMinimum = "2025-06-18";
+
 // The frozen tool surface from SPEC 8.2. Advertised in tools/list.
 QJsonArray toolDefinitions();
 
@@ -25,7 +32,10 @@ struct ToolHost {
     std::function<QList<store::Profile>(QString *error)> profiles;
     std::function<jobs::JobOutcome(const jobs::JobSpec &, jobs::CancelToken *, QString *)> runJob;
     std::function<store::Job(const QString &, bool *, QString *)> job;
+    std::function<QList<store::Job>(int limit, QString *error)> jobs;
+    std::function<store::Asset(const QString &, bool *, QString *)> asset;
     std::function<QList<store::Asset>(const QString &, QString *)> assets;
+    std::function<QList<store::Asset>(QString *error)> allAssets;
     std::function<QByteArray(const QString &relPath, QString *error)> readAsset;
 };
 
@@ -53,5 +63,10 @@ QJsonObject outcomeToResult(const jobs::JobOutcome &outcome, bool inlineImages,
 // registry and is handled there.
 ToolReply executeTool(const QString &name, const QJsonObject &args, const QString &jobId,
                       jobs::CancelToken *cancel, const ToolHost &host);
+
+// Resources (SPEC 8.2): the four roots, plus the templated job/asset reads. readResource
+// returns the resources/read result object; found=false means the URI is unknown.
+QJsonArray resourceDefinitions();
+QJsonObject readResource(const QString &uri, const ToolHost &host, bool *found, QString *error);
 
 }  // namespace oic::mcp

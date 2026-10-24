@@ -335,6 +335,14 @@ void TstStore::assetCascadeFollowsJob()
     QCOMPARE(store->assetsForJob(QStringLiteral("j1"), &error).size(), 2);
     QCOMPARE(store->allAssets(&error).size(), 2);
 
+    bool foundAsset = false;
+    const oic::store::Asset lookedUp = store->asset(QStringLiteral("a2"), &foundAsset, &error);
+    QVERIFY(foundAsset);
+    QCOMPARE(lookedUp.jobId, QStringLiteral("j1"));
+    QCOMPARE(lookedUp.bytes, 200LL);
+    store->asset(QStringLiteral("ghost"), &foundAsset, &error);
+    QVERIFY(!foundAsset);
+
     // ON DELETE CASCADE plus PRAGMA foreign_keys=ON per connection: no orphans.
     QVERIFY2(store->setPinned(QStringLiteral("j1"), false, &error), qPrintable(QStringLiteral("createJob/update: %1").arg(error)));
     oic::store::PruneReport report = store->pruneToLimits(0, 0, &error);

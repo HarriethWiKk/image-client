@@ -20,13 +20,6 @@ class QIODevice;
 
 namespace oic::mcp {
 
-inline constexpr const char *kServerName = "image-client-mcp";
-inline constexpr const char *kServerVersion = "0.1.0";
-
-// Protocol versions from SPEC 8.1: 2026-07-28 is the target, 2025-06-18 the floor.
-inline constexpr const char *kProtocolLatest = "2026-07-28";
-inline constexpr const char *kProtocolMinimum = "2025-06-18";
-
 // Line-delimited JSON-RPC 2.0 over stdio: one UTF-8 object per line, one response line per
 // request, and notifications produce no output. stdout is the protocol channel only; every
 // diagnostic belongs on stderr (SPEC 8.1).

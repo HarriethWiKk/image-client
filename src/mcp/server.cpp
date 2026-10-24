@@ -19,6 +19,8 @@ constexpr int kParseError = -32700;
 constexpr int kInvalidRequest = -32600;
 constexpr int kMethodNotFound = -32601;
 constexpr int kInvalidParams = -32602;
+constexpr int kInternalError = -32603;
+constexpr int kResourceNotFound = -32002;
 
 QJsonObject makeResult(const QJsonValue &id, const QJsonObject &result)
 {
@@ -173,6 +175,30 @@ std::optional<QJsonObject> Server::handle(const QJsonObject &request)
     if (method == QLatin1String("tools/call")) {
         return dispatchToolCall(id, request.value(QStringLiteral("params")).toObject());
     }
+    if (method == QLatin1String("resources/list")) {
+        QJsonObject result;
+        result.insert(QStringLiteral("resources"), resourceDefinitions());
+        return makeResult(id, result);
+    }
+    if (method == QLatin1String("resources/read")) {
+        const QString uri =
+            request.value(QStringLiteral("params")).toObject().value(QStringLiteral("uri")).toString();
+        if (uri.isEmpty()) {
+            return makeError(id, kInvalidParams, QStringLiteral("Invalid params: uri is required"));
+        }
+        bool found = false;
+        QString error;
+        const QJsonObject contents = readResource(uri, m_host, &found, &error);
+        if (!found) {
+            return makeError(id, kResourceNotFound,
+                             error.isEmpty() ? QStringLiteral("resource not found: %1").arg(uri)
+                                             : error);
+        }
+        if (!error.isEmpty()) {
+            return makeError(id, kInternalError, error);
+        }
+        return makeResult(id, contents);
+    }
     return makeError(id, kMethodNotFound, QStringLiteral("Method not found: %1").arg(method));
 }
 
@@ -188,8 +214,13 @@ QJsonObject Server::initialize(const QJsonValue &id, const QJsonObject &params) 
     QJsonObject toolsCapability;
     toolsCapability.insert(QStringLiteral("listChanged"), false);
 
+    QJsonObject resourcesCapability;
+    resourcesCapability.insert(QStringLiteral("subscribe"), false);
+    resourcesCapability.insert(QStringLiteral("listChanged"), false);
+
     QJsonObject capabilities;
     capabilities.insert(QStringLiteral("tools"), toolsCapability);
+    capabilities.insert(QStringLiteral("resources"), resourcesCapability);
 
     QJsonObject serverInfo;
     serverInfo.insert(QStringLiteral("name"), QString::fromLatin1(kServerName));

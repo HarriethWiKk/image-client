@@ -5,8 +5,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
+#include <QUrl>
 
 #include "oic/core/limits.h"
 #include "oic/protocol/imageprotocol.h"
@@ -178,6 +180,54 @@ QString stringArg(const QJsonObject &args, const QString &key)
     return args.value(key).toString().trimmed();
 }
 
+QJsonObject jsonResource(const QString &uri, const QJsonDocument &document)
+{
+    QJsonObject content;
+    content.insert(QStringLiteral("uri"), uri);
+    content.insert(QStringLiteral("mimeType"), QStringLiteral("application/json"));
+    content.insert(QStringLiteral("text"),
+                   QString::fromUtf8(document.toJson(QJsonDocument::Compact)));
+
+    QJsonObject result;
+    result.insert(QStringLiteral("contents"), QJsonArray{content});
+    return result;
+}
+
+QJsonObject jobSummary(const store::Job &job, bool includePrompt)
+{
+    QJsonObject summary;
+    summary.insert(QStringLiteral("id"), job.id);
+    summary.insert(QStringLiteral("status"), job.status);
+    summary.insert(QStringLiteral("mode"), job.mode);
+    summary.insert(QStringLiteral("profile"), job.profile);
+    summary.insert(QStringLiteral("model"), job.model);
+    summary.insert(QStringLiteral("n"), job.n);
+    summary.insert(QStringLiteral("createdAt"), static_cast<double>(job.createdAt));
+    summary.insert(QStringLiteral("durationMs"), static_cast<double>(job.durationMs));
+    if (!job.error.isEmpty()) {
+        summary.insert(QStringLiteral("error"), job.error);
+    }
+    if (includePrompt) {
+        summary.insert(QStringLiteral("prompt"), job.prompt);
+        summary.insert(QStringLiteral("size"), job.size);
+    }
+    return summary;
+}
+
+QJsonObject assetSummary(const store::Asset &asset)
+{
+    QJsonObject summary;
+    summary.insert(QStringLiteral("id"), asset.id);
+    summary.insert(QStringLiteral("jobId"), asset.jobId);
+    summary.insert(QStringLiteral("mime"), asset.mime);
+    summary.insert(QStringLiteral("bytes"), static_cast<double>(asset.bytes));
+    summary.insert(QStringLiteral("width"), asset.width);
+    summary.insert(QStringLiteral("height"), asset.height);
+    summary.insert(QStringLiteral("createdAt"), static_cast<double>(asset.createdAt));
+    summary.insert(QStringLiteral("uri"), QStringLiteral("image-client://assets/") + asset.id);
+    return summary;
+}
+
 }  // namespace
 
 QJsonArray toolDefinitions()
@@ -231,6 +281,33 @@ ToolHost makeDefaultToolHost(const store::Paths &paths)
             return QList<store::Asset>{};
         }
         return database.assetsForJob(jobId, error);
+    };
+
+    host.jobs = [dbPath = paths.database](int limit, QString *error) {
+        store::Database database(dbPath);
+        if (!database.open(error)) {
+            return QList<store::Job>{};
+        }
+        return database.listJobs(limit, 0, false, error);
+    };
+
+    host.asset = [dbPath = paths.database](const QString &id, bool *found, QString *error) {
+        store::Database database(dbPath);
+        if (!database.open(error)) {
+            if (found != nullptr) {
+                *found = false;
+            }
+            return store::Asset{};
+        }
+        return database.asset(id, found, error);
+    };
+
+    host.allAssets = [dbPath = paths.database](QString *error) {
+        store::Database database(dbPath);
+        if (!database.open(error)) {
+            return QList<store::Asset>{};
+        }
+        return database.allAssets(error);
     };
 
     host.readAsset = [assetsRoot = paths.assets](const QString &relPath, QString *error) {
@@ -525,6 +602,241 @@ ToolReply executeTool(const QString &name, const QJsonObject &args, const QStrin
     reply.result = outcomeToResult(outcome, args.value(QStringLiteral("inline_images")).toBool(),
                                    host.readAsset);
     return reply;
+}
+
+QJsonArray resourceDefinitions()
+{
+    const auto make = [](const QString &uri, const QString &name, const QString &description) {
+        QJsonObject resource;
+        resource.insert(QStringLiteral("uri"), uri);
+        resource.insert(QStringLiteral("name"), name);
+        resource.insert(QStringLiteral("mimeType"), QStringLiteral("application/json"));
+        resource.insert(QStringLiteral("description"), description);
+        return resource;
+    };
+
+    return QJsonArray{
+        make(QStringLiteral("image-client://capabilities"), QStringLiteral("Capabilities"),
+             QStringLiteral("Server name, version, protocol and tool surface.")),
+        make(QStringLiteral("image-client://profiles"), QStringLiteral("Profiles"),
+             QStringLiteral("Configured provider profiles.")),
+        make(QStringLiteral("image-client://jobs"), QStringLiteral("Jobs"),
+             QStringLiteral("Most recent jobs.")),
+        make(QStringLiteral("image-client://assets"), QStringLiteral("Assets"),
+             QStringLiteral("Stored assets."))};
+}
+
+QJsonObject readResource(const QString &uri, const ToolHost &host, bool *found, QString *error)
+{
+    if (found != nullptr) {
+        *found = false;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QUrl url(uri);
+    if (url.scheme() != QLatin1String("image-client")) {
+        return {};
+    }
+
+    const QString node = url.host();
+    const QStringList parts = url.path().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    const auto markFound = [found]() {
+        if (found != nullptr) {
+            *found = true;
+        }
+    };
+
+    if (node == QLatin1String("capabilities")) {
+        markFound();
+        QJsonObject payload;
+        payload.insert(QStringLiteral("name"), QString::fromLatin1(kServerName));
+        payload.insert(QStringLiteral("version"), QString::fromLatin1(kServerVersion));
+        payload.insert(QStringLiteral("protocolVersion"), QString::fromLatin1(kProtocolLatest));
+
+        QJsonArray tools;
+        for (const QJsonValue &value : toolDefinitions()) {
+            tools.append(value.toObject().value(QStringLiteral("name")));
+        }
+        payload.insert(QStringLiteral("tools"), tools);
+        payload.insert(QStringLiteral("resources"),
+                       QJsonArray{QStringLiteral("image-client://capabilities"),
+                                  QStringLiteral("image-client://profiles"),
+                                  QStringLiteral("image-client://jobs"),
+                                  QStringLiteral("image-client://assets")});
+        return jsonResource(uri, QJsonDocument(payload));
+    }
+
+    if (node == QLatin1String("profiles")) {
+        markFound();
+        if (!host.profiles) {
+            if (error != nullptr) {
+                *error = QStringLiteral("tool host is not configured");
+            }
+            return {};
+        }
+        QString readError;
+        const QList<store::Profile> profiles = host.profiles(&readError);
+        if (!readError.isEmpty()) {
+            if (error != nullptr) {
+                *error = readError;
+            }
+            return {};
+        }
+        QJsonArray items;
+        for (const store::Profile &profile : profiles) {
+            QJsonObject item;
+            item.insert(QStringLiteral("name"), profile.name);
+            item.insert(QStringLiteral("protocol"), profile.protocol);
+            item.insert(QStringLiteral("baseUrl"), profile.baseUrl);
+            item.insert(QStringLiteral("imageModel"), profile.imageModel);
+            item.insert(QStringLiteral("timeoutSeconds"), profile.timeoutSeconds);
+            items.append(item);
+        }
+        return jsonResource(uri, QJsonDocument(items));
+    }
+
+    if (node == QLatin1String("jobs")) {
+        markFound();
+        if (parts.isEmpty()) {
+            if (!host.jobs) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("tool host is not configured");
+                }
+                return {};
+            }
+            QString readError;
+            const QList<store::Job> jobs = host.jobs(50, &readError);
+            if (!readError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = readError;
+                }
+                return {};
+            }
+            QJsonArray items;
+            for (const store::Job &job : jobs) {
+                items.append(jobSummary(job, true));
+            }
+            return jsonResource(uri, QJsonDocument(items));
+        }
+        if (parts.size() == 1) {
+            const QString id = parts.first();
+            if (!host.job) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("tool host is not configured");
+                }
+                return {};
+            }
+            QString readError;
+            bool jobFound = false;
+            const store::Job job = host.job(id, &jobFound, &readError);
+            if (!readError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = readError;
+                }
+                return {};
+            }
+            if (!jobFound) {
+                if (found != nullptr) {
+                    *found = false;
+                }
+                return {};
+            }
+            QJsonObject payload = jobSummary(job, true);
+            if (host.assets) {
+                const QList<store::Asset> assets = host.assets(id, &readError);
+                if (!readError.isEmpty()) {
+                    if (error != nullptr) {
+                        *error = readError;
+                    }
+                    return {};
+                }
+                QJsonArray items;
+                for (const store::Asset &asset : assets) {
+                    items.append(assetSummary(asset));
+                }
+                payload.insert(QStringLiteral("assets"), items);
+            }
+            return jsonResource(uri, QJsonDocument(payload));
+        }
+        if (found != nullptr) {
+            *found = false;
+        }
+        return {};
+    }
+
+    if (node == QLatin1String("assets")) {
+        markFound();
+        if (parts.isEmpty()) {
+            if (!host.allAssets) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("tool host is not configured");
+                }
+                return {};
+            }
+            QString readError;
+            const QList<store::Asset> assets = host.allAssets(&readError);
+            if (!readError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = readError;
+                }
+                return {};
+            }
+            QJsonArray items;
+            for (const store::Asset &asset : assets) {
+                items.append(assetSummary(asset));
+            }
+            return jsonResource(uri, QJsonDocument(items));
+        }
+        if (parts.size() == 1) {
+            const QString id = parts.first();
+            if (!host.asset || !host.readAsset) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("tool host is not configured");
+                }
+                return {};
+            }
+            QString readError;
+            bool assetFound = false;
+            const store::Asset asset = host.asset(id, &assetFound, &readError);
+            if (!readError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = readError;
+                }
+                return {};
+            }
+            if (!assetFound) {
+                if (found != nullptr) {
+                    *found = false;
+                }
+                return {};
+            }
+            const QByteArray bytes = host.readAsset(asset.relPath, &readError);
+            if (!readError.isEmpty() || bytes.isEmpty()) {
+                if (error != nullptr) {
+                    *error = readError.isEmpty() ? QStringLiteral("asset is empty") : readError;
+                }
+                return {};
+            }
+            QJsonObject content;
+            content.insert(QStringLiteral("uri"), uri);
+            content.insert(QStringLiteral("mimeType"),
+                           asset.mime.isEmpty() ? QStringLiteral("application/octet-stream")
+                                                : asset.mime);
+            content.insert(QStringLiteral("blob"), QString::fromLatin1(bytes.toBase64()));
+
+            QJsonObject result;
+            result.insert(QStringLiteral("contents"), QJsonArray{content});
+            return result;
+        }
+        if (found != nullptr) {
+            *found = false;
+        }
+        return {};
+    }
+
+    return {};
 }
 
 }  // namespace oic::mcp

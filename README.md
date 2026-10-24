@@ -7,7 +7,7 @@ Windows 桌面图像生成客户端：C++20 + QML（Qt 6.8.3）。支持 OpenAI 
 ## 当前状态
 
 - **GUI**（`ImageClient.exe`）：生成、图生图、历史、设置、灯箱已实现。
-- **MCP**（`image-client-mcp.exe`）：stdio JSON-RPC、`initialize` / `ping` / `tools/list` 已实现；`generate_image` / `edit_image` / `get_job` / `cancel_job` 已接上 core，默认返回 `image-client://assets/{id}` 资源链接（`inline_images` 可内联字节）；`import_reference_image` 与 resources 接口在下一里程碑。
+- **MCP**（`image-client-mcp.exe`）：stdio JSON-RPC、`initialize` / `ping` / `tools/list` 已实现；`generate_image` / `edit_image` / `get_job` / `cancel_job` 已接上 core，默认返回 `image-client://assets/{id}` 资源链接（`inline_images` 可内联字节）；`resources/list` / `resources/read` 提供 capabilities / profiles / jobs / assets（图片走 `blob`）；`import_reference_image` 在下一里程碑。
 - **测试**：18 个套件。`tst_store` 的并发写、`tst_jobmanager` 的并发上限、`tst_assets` 的目录 ACL 三个用例在本机失败，前两个稳定复现，待查。
 
 ## 环境要求

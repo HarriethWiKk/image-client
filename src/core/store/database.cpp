@@ -683,6 +683,28 @@ bool Database::addAsset(const Asset &asset, QString *error)
     return true;
 }
 
+Asset Database::asset(const QString &id, bool *found, QString *error) const
+{
+    if (found != nullptr) {
+        *found = false;
+    }
+    QSqlDatabase database = QSqlDatabase::database(m_connectionName, false);
+    QSqlQuery query(database);
+    if (!run(query,
+             QString("SELECT %1 FROM assets WHERE id = ?").arg(QLatin1String(kAssetColumns)),
+             error)) {
+        return Asset();
+    }
+    query.addBindValue(text(id));
+    if (!query.exec() || !query.next()) {
+        return Asset();
+    }
+    if (found != nullptr) {
+        *found = true;
+    }
+    return assetFromQuery(query);
+}
+
 QList<Asset> Database::assetsForJob(const QString &jobId, QString *error) const
 {
     QList<Asset> result;

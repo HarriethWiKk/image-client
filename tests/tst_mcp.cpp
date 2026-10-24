@@ -88,6 +88,60 @@ oic::mcp::ToolHost fakeHost(const std::shared_ptr<oic::jobs::JobSpec> &captured,
     return host;
 }
 
+oic::mcp::ToolHost resourceHost()
+{
+    oic::mcp::ToolHost host;
+    oic::store::Job job;
+    job.id = QStringLiteral("j1");
+    job.status = QStringLiteral("succeeded");
+    job.mode = QStringLiteral("generate");
+    job.model = QStringLiteral("gpt-image-2");
+    job.n = 1;
+    job.prompt = QStringLiteral("a cat");
+
+    oic::store::Asset asset;
+    asset.id = QStringLiteral("a1");
+    asset.jobId = QStringLiteral("j1");
+    asset.relPath = QStringLiteral("j1/x.png");
+    asset.mime = QStringLiteral("image/png");
+    asset.bytes = 3;
+
+    host.job = [job](const QString &id, bool *found, QString *error) {
+        *found = id == job.id;
+        if (error != nullptr) {
+            error->clear();
+        }
+        return job;
+    };
+    host.jobs = [job](int, QString *error) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return QList<oic::store::Job>{job};
+    };
+    host.assets = [](const QString &, QString *error) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return QList<oic::store::Asset>{};
+    };
+    host.asset = [asset](const QString &id, bool *found, QString *error) {
+        *found = id == asset.id;
+        if (error != nullptr) {
+            error->clear();
+        }
+        return asset;
+    };
+    host.allAssets = [asset](QString *error) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return QList<oic::store::Asset>{asset};
+    };
+    host.readAsset = [](const QString &, QString *) { return QByteArray("abc"); };
+    return host;
+}
+
 }  // namespace
 
 class TstMcp : public QObject
@@ -119,6 +173,11 @@ private slots:
     void getJobReturnsStatusAndAssets();
     void importReferenceIsReportedAsUnavailable();
     void cancellationStopsARunningJob();
+    void resourcesListAdvertisesFourRoots();
+    void resourceCapabilitiesDescribesTheServer();
+    void resourceJobsReadsTheStore();
+    void resourceAssetReturnsBlob();
+    void unknownResourceIsNotFound();
 };
 
 void TstMcp::initializeEchoesSupportedVersion()
@@ -134,6 +193,7 @@ void TstMcp::initializeEchoesSupportedVersion()
     QCOMPARE(result.value(QStringLiteral("serverInfo")).toObject().value(QStringLiteral("name")).toString(),
              QStringLiteral("image-client-mcp"));
     QVERIFY(result.value(QStringLiteral("capabilities")).toObject().value(QStringLiteral("tools")).isObject());
+    QVERIFY(result.value(QStringLiteral("capabilities")).toObject().value(QStringLiteral("resources")).isObject());
 }
 
 void TstMcp::initializeFallsBackForUnknownVersion()
@@ -480,6 +540,85 @@ void TstMcp::cancellationStopsARunningJob()
                 .value(QStringLiteral("text"))
                 .toString()
                 .contains(QStringLiteral("cancelled")));
+}
+
+void TstMcp::resourcesListAdvertisesFourRoots()
+{
+    const QJsonObject response = responseFor(R"({"jsonrpc":"2.0","id":31,"method":"resources/list"})");
+    const QJsonArray resources = response.value(QStringLiteral("result")).toObject().value(QStringLiteral("resources")).toArray();
+
+    QStringList uris;
+    for (const QJsonValue &value : resources) {
+        uris.append(value.toObject().value(QStringLiteral("uri")).toString());
+    }
+    uris.sort();
+
+    QStringList expected{QStringLiteral("image-client://assets"), QStringLiteral("image-client://capabilities"),
+                         QStringLiteral("image-client://jobs"), QStringLiteral("image-client://profiles")};
+    expected.sort();
+    QCOMPARE(uris, expected);
+}
+
+void TstMcp::resourceCapabilitiesDescribesTheServer()
+{
+    oic::mcp::Server server(resourceHost());
+    const QJsonObject response = call(
+        server,
+        R"({"jsonrpc":"2.0","id":32,"method":"resources/read","params":{"uri":"image-client://capabilities"}})");
+
+    const QJsonArray contents = response.value(QStringLiteral("result")).toObject().value(QStringLiteral("contents")).toArray();
+    QCOMPARE(contents.size(), 1);
+    const QJsonObject payload = QJsonDocument::fromJson(
+        contents.at(0).toObject().value(QStringLiteral("text")).toString().toUtf8()).object();
+    QCOMPARE(payload.value(QStringLiteral("name")).toString(), QStringLiteral("image-client-mcp"));
+    QCOMPARE(payload.value(QStringLiteral("tools")).toArray().size(), 5);
+    QCOMPARE(payload.value(QStringLiteral("resources")).toArray().size(), 4);
+}
+
+void TstMcp::resourceJobsReadsTheStore()
+{
+    oic::mcp::Server server(resourceHost());
+    const QJsonObject response = call(
+        server,
+        R"({"jsonrpc":"2.0","id":33,"method":"resources/read","params":{"uri":"image-client://jobs"}})");
+
+    const QString text = response.value(QStringLiteral("result"))
+                             .toObject()
+                             .value(QStringLiteral("contents"))
+                             .toArray()
+                             .at(0)
+                             .toObject()
+                             .value(QStringLiteral("text"))
+                             .toString();
+    const QJsonArray jobs = QJsonDocument::fromJson(text.toUtf8()).array();
+    QCOMPARE(jobs.size(), 1);
+    QCOMPARE(jobs.at(0).toObject().value(QStringLiteral("id")).toString(), QStringLiteral("j1"));
+    QCOMPARE(jobs.at(0).toObject().value(QStringLiteral("status")).toString(), QStringLiteral("succeeded"));
+}
+
+void TstMcp::resourceAssetReturnsBlob()
+{
+    oic::mcp::Server server(resourceHost());
+    const QJsonObject response = call(
+        server,
+        R"({"jsonrpc":"2.0","id":34,"method":"resources/read","params":{"uri":"image-client://assets/a1"}})");
+
+    const QJsonObject content = response.value(QStringLiteral("result"))
+                                    .toObject()
+                                    .value(QStringLiteral("contents"))
+                                    .toArray()
+                                    .at(0)
+                                    .toObject();
+    QCOMPARE(content.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
+    QCOMPARE(content.value(QStringLiteral("blob")).toString(),
+             QString::fromLatin1(QByteArray("abc").toBase64()));
+}
+
+void TstMcp::unknownResourceIsNotFound()
+{
+    const QJsonObject response = responseFor(
+        R"({"jsonrpc":"2.0","id":35,"method":"resources/read","params":{"uri":"image-client://nope"}})");
+    QCOMPARE(response.value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(), -32002);
 }
 
 QTEST_GUILESS_MAIN(TstMcp)
