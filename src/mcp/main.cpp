@@ -10,6 +10,7 @@
 #endif
 
 #include "oic/core/endpoints.h"
+#include "oic/mcp/config.h"
 #include "oic/mcp/server.h"
 #include "oic/store/paths.h"
 
@@ -60,6 +61,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    oic::mcp::Server server(oic::mcp::makeDefaultToolHost(paths));
+    QString configError;
+    const oic::mcp::McpConfig config =
+        oic::mcp::loadConfig(paths.root + QStringLiteral("/config.json"), &configError);
+    if (!configError.isEmpty()) {
+        QTextStream err(stderr);
+        err << "image-client-mcp: " << configError << '\n';
+        err.flush();
+    }
+
+    oic::mcp::Server server(oic::mcp::makeDefaultToolHost(paths, config));
     return server.run();
 }

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 HarriethWiKk
 add_library(oic-mcp STATIC
+    oic/mcp/config.h
     oic/mcp/server.h
     oic/mcp/tools.h
+    config.cpp
     server.cpp
     tools.cpp
 )

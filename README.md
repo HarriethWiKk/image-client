@@ -7,7 +7,7 @@ Windows 桌面图像生成客户端：C++20 + QML（Qt 6.8.3）。支持 OpenAI 
 ## 当前状态
 
 - **GUI**（`ImageClient.exe`）：生成、图生图、历史、设置、灯箱已实现。
-- **MCP**（`image-client-mcp.exe`）：stdio JSON-RPC、`initialize` / `ping` / `tools/list` 已实现；`generate_image` / `edit_image` / `get_job` / `cancel_job` 已接上 core，默认返回 `image-client://assets/{id}` 资源链接（`inline_images` 可内联字节）；`resources/list` / `resources/read` 提供 capabilities / profiles / jobs / assets（图片走 `blob`）；`import_reference_image` 在下一里程碑。
+- **MCP**（`image-client-mcp.exe`）：stdio JSON-RPC、`initialize` / `ping` / `tools/list` 已实现；`generate_image` / `edit_image` / `get_job` / `cancel_job` 已接上 core，默认返回 `image-client://assets/{id}` 资源链接（`inline_images` 可内联字节）；`resources/list` / `resources/read` 提供 capabilities / profiles / jobs / assets（图片走 `blob`）；`import_reference_image` 走 `allowed_input_roots` 白名单，导入的引用可直接用于 `edit_image`。
 - **测试**：18 个套件。`tst_store` 的并发写、`tst_jobmanager` 的并发上限、`tst_assets` 的目录 ACL 三个用例在本机失败，前两个稳定复现，待查。
 
 ## 环境要求
@@ -71,6 +71,17 @@ echo {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"
 ```
 
 `--version` / `--smoke` 仍可用于快速检查二进制。stdout 只输出协议帧，诊断一律走 stderr。
+
+MCP 的可选配置在 `%LOCALAPPDATA%\image-client\config.json`：
+
+```json
+{
+  "allowed_input_roots": ["D:/photos"],
+  "trusted_hosts": ["gw.internal"]
+}
+```
+
+两个字段都可选；文件不存在时 `import_reference_image` 关闭、不信任任何额外主机。导入路径必须是已存在目录下的文件，运行时按 canonical path 做前缀校验，`..` 与符号链接逃逸都会被拒绝，单张上限 10 MiB。
 
 ## 目录结构
 

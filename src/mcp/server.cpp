@@ -9,7 +9,10 @@
 #include <QUuid>
 
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
+
+#include <chrono>
 
 namespace oic::mcp {
 namespace {
@@ -103,8 +106,7 @@ Server::Server(ToolHost host) : m_host(std::move(host)) {}
 
 Server::~Server()
 {
-    cancelAll();
-    joinWorkers();
+    shutdownWorkers();
 }
 
 QByteArray Server::handleLine(const QByteArray &line)
@@ -305,6 +307,7 @@ void Server::startJob(const QJsonObject &request, const QString &tool)
         request.value(QStringLiteral("params")).toObject().value(QStringLiteral("arguments")).toObject();
 
     std::lock_guard<std::mutex> lock(m_workersMutex);
+    ++m_activeWorkers;
     m_workers.emplace_back([this, id, requestKey, jobId, token, tool, args]() {
         const ToolReply reply = executeTool(tool, args, jobId, token.get(), m_host);
         {
@@ -314,6 +317,11 @@ void Server::startJob(const QJsonObject &request, const QString &tool)
         }
         writeFrame(reply.protocolError ? makeError(id, kInvalidParams, reply.error)
                                        : makeResult(id, reply.result));
+        {
+            std::lock_guard<std::mutex> guard(m_workersMutex);
+            --m_activeWorkers;
+        }
+        m_workersDone.notify_all();
     });
 }
 
@@ -367,8 +375,7 @@ int Server::run(QIODevice *input, std::function<void(const QByteArray &)> write)
         }
     }
 
-    cancelAll();
-    joinWorkers();
+    shutdownWorkers();
     return 0;
 }
 
@@ -389,11 +396,21 @@ void Server::cancelAll()
     }
 }
 
-void Server::joinWorkers()
+void Server::shutdownWorkers()
 {
+    cancelAll();
+
     std::vector<std::thread> workers;
     {
-        std::lock_guard<std::mutex> lock(m_workersMutex);
+        std::unique_lock<std::mutex> lock(m_workersMutex);
+        const bool drained = m_workersDone.wait_for(
+            lock, std::chrono::seconds(10), [this]() { return m_activeWorkers.load() == 0; });
+        if (!drained) {
+            // A worker is inside Transport::send, which cannot be interrupted (SPEC 9.2).
+            // Joining would block up to the 500 s request timeout; exiting is the honest
+            // option, and SQLite's WAL keeps the store consistent across the hard exit.
+            std::_Exit(0);
+        }
         workers.swap(m_workers);
     }
     for (std::thread &worker : workers) {

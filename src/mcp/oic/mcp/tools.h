@@ -2,13 +2,18 @@
 // Copyright 2026 HarriethWiKk
 #pragma once
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMutex>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
+#include <memory>
 
 #include "oic/jobs/executor.h"
+#include "oic/mcp/config.h"
 #include "oic/store/database.h"
 #include "oic/store/paths.h"
 
@@ -26,6 +31,24 @@ QJsonArray toolDefinitions();
 
 bool isKnownTool(const QString &name);
 
+// In-session references imported from disk. They live as long as the stdio session; the
+// asset store is for persisted results, and a reference has no job to hang off yet.
+class ReferenceRegistry
+{
+public:
+    struct Entry {
+        QString path;
+        QString mime;
+    };
+
+    QString add(const QString &path, const QString &mime);
+    bool lookup(const QString &ref, Entry *entry) const;
+
+private:
+    mutable QMutex m_mutex;
+    QHash<QString, Entry> m_entries;
+};
+
 // Seams so the tool layer is testable without a database, a network, or Credential Manager.
 // The production wiring is makeDefaultToolHost().
 struct ToolHost {
@@ -37,9 +60,15 @@ struct ToolHost {
     std::function<QList<store::Asset>(const QString &, QString *)> assets;
     std::function<QList<store::Asset>(QString *error)> allAssets;
     std::function<QByteArray(const QString &relPath, QString *error)> readAsset;
+    // image-client://assets/{id} -> data URL, for edit_image references.
+    std::function<bool(const QString &assetId, QString *dataUrl, QString *mime, QString *error)>
+        assetDataUrl;
+
+    QStringList allowedInputRoots;
+    std::shared_ptr<ReferenceRegistry> references;
 };
 
-ToolHost makeDefaultToolHost(const store::Paths &paths);
+ToolHost makeDefaultToolHost(const store::Paths &paths, const McpConfig &config);
 
 struct ToolReply {
     // true maps to a JSON-RPC invalid-params error; false carries a CallToolResult (which may

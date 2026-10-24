@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QJsonValue>
 
+#include <atomic>
+#include <condition_variable>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -56,7 +58,7 @@ private:
 
     void writeFrame(const QJsonObject &response);
     void cancelAll();
-    void joinWorkers();
+    void shutdownWorkers();
 
     static QString idKey(const QJsonValue &id);
 
@@ -70,6 +72,8 @@ private:
 
     std::mutex m_workersMutex;
     std::vector<std::thread> m_workers;
+    std::atomic<int> m_activeWorkers{0};
+    std::condition_variable m_workersDone;
 };
 
 }  // namespace oic::mcp

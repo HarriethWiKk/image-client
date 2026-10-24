@@ -7,11 +7,14 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
 #include <QStringList>
+#include <QUuid>
 #include <QUrl>
 
 #include "oic/core/limits.h"
 #include "oic/protocol/imageprotocol.h"
+#include "oic/store/imageprobe.h"
 
 namespace oic::mcp {
 namespace {
@@ -19,6 +22,38 @@ namespace {
 // SPEC 13.2's starting quota; the MCP side has no settings UI, so it uses the documented
 // default rather than inventing a second source of truth.
 constexpr qint64 kDefaultAssetQuotaBytes = 2LL * 1024 * 1024 * 1024;
+
+// Reads an asset below the store root, refusing a path that escapes it.
+QByteArray readAssetFile(const QString &root, const QString &relPath, QString *error)
+{
+    const QString rootClean = QDir::cleanPath(root);
+    const QString absolute = QDir::cleanPath(QDir(root).filePath(relPath));
+    if (absolute != rootClean && !absolute.startsWith(rootClean + QLatin1Char('/'))) {
+        if (error != nullptr) {
+            *error = QStringLiteral("非法资源路径");
+        }
+        return {};
+    }
+    QFile file(absolute);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("无法读取资源：%1").arg(QFileInfo(absolute).fileName());
+        }
+        return {};
+    }
+    return file.readAll();
+}
+
+bool pathUnderRoots(const QString &canonical, const QStringList &roots)
+{
+    for (const QString &root : roots) {
+        const QString clean = QDir::cleanPath(root);
+        if (canonical == clean || canonical.startsWith(clean + QLatin1Char('/'))) {
+            return true;
+        }
+    }
+    return false;
+}
 
 QJsonObject stringProperty(const QString &description, int maxLength = 0)
 {
@@ -228,7 +263,88 @@ QJsonObject assetSummary(const store::Asset &asset)
     return summary;
 }
 
+// Turns image-client:// references into data URLs before buildJobSpec sees them: the
+// executor only understands the wire form, and the resolution needs the store/registry.
+bool resolveEditReferences(QJsonObject *args, const ToolHost &host, QString *error)
+{
+    if (!args->contains(QStringLiteral("edit_images"))) {
+        return true;
+    }
+    static const QString kAssets = QStringLiteral("image-client://assets/");
+    static const QString kReferences = QStringLiteral("image-client://references/");
+
+    const QJsonArray refs = args->value(QStringLiteral("edit_images")).toArray();
+    QJsonArray resolved;
+    for (const QJsonValue &value : refs) {
+        if (!value.isString()) {
+            *error = QStringLiteral("edit_images entries must be strings");
+            return false;
+        }
+        const QString ref = value.toString();
+        if (ref.startsWith(kAssets)) {
+            if (!host.assetDataUrl) {
+                *error = QStringLiteral("tool host is not configured");
+                return false;
+            }
+            QString dataUrl;
+            QString mime;
+            if (!host.assetDataUrl(ref.mid(kAssets.size()), &dataUrl, &mime, error)) {
+                return false;
+            }
+            resolved.append(dataUrl);
+        } else if (ref.startsWith(kReferences)) {
+            if (!host.references) {
+                *error = QStringLiteral("tool host is not configured");
+                return false;
+            }
+            ReferenceRegistry::Entry entry;
+            if (!host.references->lookup(ref.mid(kReferences.size()), &entry)) {
+                *error = QStringLiteral("unknown reference: %1").arg(ref);
+                return false;
+            }
+            QFile file(entry.path);
+            if (!file.open(QIODevice::ReadOnly)) {
+                *error = QStringLiteral("cannot read reference: %1").arg(entry.path);
+                return false;
+            }
+            const QByteArray bytes = file.readAll();
+            if (bytes.size() > limits::kMaxReferenceImageBytes) {
+                *error = QStringLiteral("reference image exceeds %1 bytes")
+                             .arg(limits::kMaxReferenceImageBytes);
+                return false;
+            }
+            resolved.append(protocol::dataUrlFromBytes(bytes, entry.mime));
+        } else {
+            // A data URL (or something buildJobSpec will reject with a precise message).
+            resolved.append(ref);
+        }
+    }
+    args->insert(QStringLiteral("edit_images"), resolved);
+    return true;
+}
+
 }  // namespace
+
+QString ReferenceRegistry::add(const QString &path, const QString &mime)
+{
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QMutexLocker locker(&m_mutex);
+    m_entries.insert(id, Entry{path, mime});
+    return id;
+}
+
+bool ReferenceRegistry::lookup(const QString &ref, Entry *entry) const
+{
+    QMutexLocker locker(&m_mutex);
+    const auto it = m_entries.constFind(ref);
+    if (it == m_entries.constEnd()) {
+        return false;
+    }
+    if (entry != nullptr) {
+        *entry = it.value();
+    }
+    return true;
+}
 
 QJsonArray toolDefinitions()
 {
@@ -245,9 +361,11 @@ bool isKnownTool(const QString &name)
     return kTools.contains(name);
 }
 
-ToolHost makeDefaultToolHost(const store::Paths &paths)
+ToolHost makeDefaultToolHost(const store::Paths &paths, const McpConfig &config)
 {
     ToolHost host;
+    host.allowedInputRoots = config.allowedInputRoots;
+    host.references = std::make_shared<ReferenceRegistry>();
 
     host.profiles = [dbPath = paths.database](QString *error) {
         store::Database database(dbPath);
@@ -257,10 +375,13 @@ ToolHost makeDefaultToolHost(const store::Paths &paths)
         return database.profiles(error);
     };
 
-    host.runJob = [dbPath = paths.database, assetsRoot = paths.assets](
-                      const jobs::JobSpec &spec, jobs::CancelToken *cancel, QString *error) {
+    host.runJob = [dbPath = paths.database, assetsRoot = paths.assets,
+                   trustedHosts = config.trustedHosts](const jobs::JobSpec &spec,
+                                                       jobs::CancelToken *cancel, QString *error) {
+        net::Transport::Settings settings;
+        settings.trustedHosts = trustedHosts;
         const jobs::JobDeps deps =
-            jobs::makeDefaultDeps(dbPath, assetsRoot, kDefaultAssetQuotaBytes);
+            jobs::makeDefaultDeps(dbPath, assetsRoot, kDefaultAssetQuotaBytes, settings);
         return jobs::runJob(spec, deps, cancel, error);
     };
 
@@ -311,22 +432,38 @@ ToolHost makeDefaultToolHost(const store::Paths &paths)
     };
 
     host.readAsset = [assetsRoot = paths.assets](const QString &relPath, QString *error) {
-        const QString rootClean = QDir::cleanPath(assetsRoot);
-        const QString absolute = QDir::cleanPath(QDir(assetsRoot).filePath(relPath));
-        if (absolute != rootClean && !absolute.startsWith(rootClean + QLatin1Char('/'))) {
-            if (error != nullptr) {
-                *error = QStringLiteral("非法资源路径");
-            }
-            return QByteArray{};
+        return readAssetFile(assetsRoot, relPath, error);
+    };
+
+    host.assetDataUrl = [dbPath = paths.database, assetsRoot = paths.assets](
+                            const QString &id, QString *dataUrl, QString *mime, QString *error) {
+        store::Database database(dbPath);
+        if (!database.open(error)) {
+            return false;
         }
-        QFile file(absolute);
-        if (!file.open(QIODevice::ReadOnly)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("无法读取资源：%1").arg(QFileInfo(absolute).fileName());
-            }
-            return QByteArray{};
+        bool found = false;
+        const store::Asset asset = database.asset(id, &found, error);
+        if (error != nullptr && !error->isEmpty()) {
+            return false;
         }
-        return file.readAll();
+        if (!found) {
+            if (error != nullptr) {
+                *error = QStringLiteral("asset not found: %1").arg(id);
+            }
+            return false;
+        }
+        const QByteArray bytes = readAssetFile(assetsRoot, asset.relPath, error);
+        if (bytes.isEmpty()) {
+            return false;
+        }
+        const QString type = asset.mime.isEmpty() ? QStringLiteral("image/png") : asset.mime;
+        if (dataUrl != nullptr) {
+            *dataUrl = protocol::dataUrlFromBytes(bytes, type);
+        }
+        if (mime != nullptr) {
+            *mime = type;
+        }
+        return true;
     };
 
     return host;
@@ -539,8 +676,66 @@ ToolReply executeTool(const QString &name, const QJsonObject &args, const QStrin
     }
 
     if (name == QLatin1String("import_reference_image")) {
-        reply.result = toolError(QStringLiteral(
-            "import_reference_image is not implemented yet; pass base64 data URLs to edit_image"));
+        const QString raw = args.value(QStringLiteral("path")).toString().trimmed();
+        if (raw.isEmpty()) {
+            reply.protocolError = true;
+            reply.error = QStringLiteral("path is required");
+            return reply;
+        }
+        if (!host.references) {
+            reply.result = toolError(QStringLiteral("tool host is not configured"));
+            return reply;
+        }
+        if (host.allowedInputRoots.isEmpty()) {
+            reply.result = toolError(
+                QStringLiteral("import is disabled: set allowed_input_roots in config.json"));
+            return reply;
+        }
+
+        const QFileInfo info(raw);
+        const QString canonical = info.canonicalFilePath();
+        if (canonical.isEmpty() || !QFileInfo(canonical).isFile()) {
+            reply.result = toolError(QStringLiteral("file not found: %1").arg(raw));
+            return reply;
+        }
+        if (!pathUnderRoots(canonical, host.allowedInputRoots)) {
+            reply.result = toolError(
+                QStringLiteral("path is outside allowed_input_roots: %1").arg(canonical));
+            return reply;
+        }
+        const QFileInfo canonicalInfo(canonical);
+        if (canonicalInfo.size() > limits::kMaxReferenceImageBytes) {
+            reply.result = toolError(QStringLiteral("reference image exceeds %1 bytes")
+                                         .arg(limits::kMaxReferenceImageBytes));
+            return reply;
+        }
+        QFile file(canonical);
+        if (!file.open(QIODevice::ReadOnly)) {
+            reply.result = toolError(QStringLiteral("cannot read %1").arg(canonical));
+            return reply;
+        }
+        const QByteArray bytes = file.readAll();
+        const store::ImageInfo probe = store::probeImage(bytes);
+        if (!probe.recognized) {
+            reply.result = toolError(QStringLiteral("not a recognized image: %1").arg(canonical));
+            return reply;
+        }
+
+        const QString ref = host.references->add(canonical, probe.mime);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ref"), ref);
+        payload.insert(QStringLiteral("uri"), QStringLiteral("image-client://references/") + ref);
+        payload.insert(QStringLiteral("mimeType"), probe.mime);
+        payload.insert(QStringLiteral("width"), probe.width);
+        payload.insert(QStringLiteral("height"), probe.height);
+        payload.insert(QStringLiteral("bytes"), static_cast<double>(bytes.size()));
+
+        QJsonObject result;
+        result.insert(QStringLiteral("content"),
+                      QJsonArray{textContent(QString::fromUtf8(
+                          QJsonDocument(payload).toJson(QJsonDocument::Compact)))});
+        result.insert(QStringLiteral("isError"), false);
+        reply.result = result;
         return reply;
     }
 
@@ -583,7 +778,12 @@ ToolReply executeTool(const QString &name, const QJsonObject &args, const QStrin
     }
 
     const bool editMode = name == QLatin1String("edit_image");
-    jobs::JobSpec spec = buildJobSpec(args, profile, editMode, &error);
+    QJsonObject effectiveArgs = args;
+    if (editMode && !resolveEditReferences(&effectiveArgs, host, &error)) {
+        reply.result = toolError(error);
+        return reply;
+    }
+    jobs::JobSpec spec = buildJobSpec(effectiveArgs, profile, editMode, &error);
     if (!error.isEmpty()) {
         reply.protocolError = true;
         reply.error = error;

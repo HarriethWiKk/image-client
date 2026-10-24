@@ -6,18 +6,23 @@
 // driven through a fake ToolHost, so no database, network, or Credential Manager is needed.
 
 #include <QBuffer>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
 #include <QVector>
 
 #include <memory>
 
+#include "oic/mcp/config.h"
 #include "oic/mcp/server.h"
 #include "oic/mcp/tools.h"
 
@@ -44,6 +49,12 @@ QJsonObject toolByName(const QJsonArray &tools, const QString &name)
         }
     }
     return {};
+}
+
+QByteArray onePixelPng()
+{
+    return QByteArray::fromBase64(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
 }
 
 oic::store::Profile sampleProfile()
@@ -171,13 +182,19 @@ private slots:
     void generateImageRunsTheJob();
     void failedJobBecomesAToolError();
     void getJobReturnsStatusAndAssets();
-    void importReferenceIsReportedAsUnavailable();
+    void importIsDisabledWithoutRoots();
     void cancellationStopsARunningJob();
     void resourcesListAdvertisesFourRoots();
     void resourceCapabilitiesDescribesTheServer();
     void resourceJobsReadsTheStore();
     void resourceAssetReturnsBlob();
     void unknownResourceIsNotFound();
+    void configLoadsRootsAndHosts();
+    void configMissingFileIsEmpty();
+    void configRejectsMalformedJson();
+    void importRejectsPathsOutsideRoots();
+    void importStagesAReference();
+    void editAcceptsAssetUri();
 };
 
 void TstMcp::initializeEchoesSupportedVersion()
@@ -476,9 +493,13 @@ void TstMcp::getJobReturnsStatusAndAssets()
              QStringLiteral("image-client://assets/asset-9"));
 }
 
-void TstMcp::importReferenceIsReportedAsUnavailable()
+void TstMcp::importIsDisabledWithoutRoots()
 {
-    oic::mcp::Server server;
+    auto captured = std::make_shared<oic::jobs::JobSpec>();
+    oic::mcp::ToolHost host = fakeHost(captured);
+    host.references = std::make_shared<oic::mcp::ReferenceRegistry>();
+
+    oic::mcp::Server server(host);
     const QJsonObject response = call(
         server,
         R"({"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"import_reference_image","arguments":{"path":"C:/x.png"}}})");
@@ -490,7 +511,7 @@ void TstMcp::importReferenceIsReportedAsUnavailable()
                 .toObject()
                 .value(QStringLiteral("text"))
                 .toString()
-                .contains(QStringLiteral("not implemented")));
+                .contains(QStringLiteral("disabled")));
 }
 
 void TstMcp::cancellationStopsARunningJob()
@@ -619,6 +640,173 @@ void TstMcp::unknownResourceIsNotFound()
     const QJsonObject response = responseFor(
         R"({"jsonrpc":"2.0","id":35,"method":"resources/read","params":{"uri":"image-client://nope"}})");
     QCOMPARE(response.value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(), -32002);
+}
+
+void TstMcp::configLoadsRootsAndHosts()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = QDir(dir.path()).filePath(QStringLiteral("photos"));
+    QVERIFY(QDir().mkpath(root));
+
+    QString jsonPath = root;
+    jsonPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const QString configPath = QDir(dir.path()).filePath(QStringLiteral("config.json"));
+    QFile file(configPath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QStringLiteral("{\"allowed_input_roots\":[\"%1\"],\"trusted_hosts\":[\"GW.Internal\"]}")
+                   .arg(jsonPath)
+                   .toUtf8());
+    file.close();
+
+    QString error;
+    const oic::mcp::McpConfig config = oic::mcp::loadConfig(configPath, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(config.allowedInputRoots.size(), 1);
+    QCOMPARE(config.allowedInputRoots.first(), QFileInfo(root).canonicalFilePath());
+    QCOMPARE(config.trustedHosts, QStringList{QStringLiteral("gw.internal")});
+}
+
+void TstMcp::configMissingFileIsEmpty()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString error;
+    const oic::mcp::McpConfig config =
+        oic::mcp::loadConfig(QDir(dir.path()).filePath(QStringLiteral("nope.json")), &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(config.allowedInputRoots.isEmpty());
+    QVERIFY(config.trustedHosts.isEmpty());
+}
+
+void TstMcp::configRejectsMalformedJson()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString configPath = QDir(dir.path()).filePath(QStringLiteral("config.json"));
+    QFile file(configPath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{not json");
+    file.close();
+
+    QString error;
+    const oic::mcp::McpConfig config = oic::mcp::loadConfig(configPath, &error);
+    QVERIFY(!error.isEmpty());
+    QVERIFY(config.allowedInputRoots.isEmpty());
+}
+
+void TstMcp::importRejectsPathsOutsideRoots()
+{
+    QTemporaryDir root;
+    QTemporaryDir outside;
+    QVERIFY(root.isValid());
+    QVERIFY(outside.isValid());
+    const QString imagePath = QDir(outside.path()).filePath(QStringLiteral("ref.png"));
+    QFile file(imagePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(onePixelPng());
+    file.close();
+
+    auto captured = std::make_shared<oic::jobs::JobSpec>();
+    oic::mcp::ToolHost host = fakeHost(captured);
+    host.allowedInputRoots = QStringList{QFileInfo(root.path()).canonicalFilePath()};
+    host.references = std::make_shared<oic::mcp::ReferenceRegistry>();
+
+    QString jsonPath = imagePath;
+    jsonPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    oic::mcp::Server server(host);
+    const QByteArray request =
+        QStringLiteral("{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":"
+                       "{\"name\":\"import_reference_image\",\"arguments\":{\"path\":\"%1\"}}}")
+            .arg(jsonPath)
+            .toUtf8();
+    const QJsonObject response = call(server, request);
+    const QJsonObject result = response.value(QStringLiteral("result")).toObject();
+    QCOMPARE(result.value(QStringLiteral("isError")).toBool(), true);
+    QVERIFY(result.value(QStringLiteral("content"))
+                .toArray()
+                .at(0)
+                .toObject()
+                .value(QStringLiteral("text"))
+                .toString()
+                .contains(QStringLiteral("outside allowed_input_roots")));
+}
+
+void TstMcp::importStagesAReference()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString imagePath = QDir(root.path()).filePath(QStringLiteral("ref.png"));
+    QFile file(imagePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(onePixelPng());
+    file.close();
+
+    auto captured = std::make_shared<oic::jobs::JobSpec>();
+    oic::mcp::ToolHost host = fakeHost(captured);
+    host.allowedInputRoots = QStringList{QFileInfo(root.path()).canonicalFilePath()};
+    host.references = std::make_shared<oic::mcp::ReferenceRegistry>();
+
+    QString jsonPath = imagePath;
+    jsonPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    oic::mcp::Server server(host);
+
+    const QByteArray importRequest =
+        QStringLiteral("{\"jsonrpc\":\"2.0\",\"id\":40,\"method\":\"tools/call\",\"params\":"
+                       "{\"name\":\"import_reference_image\",\"arguments\":{\"path\":\"%1\"}}}")
+            .arg(jsonPath)
+            .toUtf8();
+    const QJsonObject importResponse = call(server, importRequest);
+    const QJsonObject importResult = importResponse.value(QStringLiteral("result")).toObject();
+    QCOMPARE(importResult.value(QStringLiteral("isError")).toBool(), false);
+
+    const QString payloadText = importResult.value(QStringLiteral("content"))
+                                    .toArray()
+                                    .at(0)
+                                    .toObject()
+                                    .value(QStringLiteral("text"))
+                                    .toString();
+    const QJsonObject payload = QJsonDocument::fromJson(payloadText.toUtf8()).object();
+    const QString ref = payload.value(QStringLiteral("ref")).toString();
+    QVERIFY(!ref.isEmpty());
+    QCOMPARE(payload.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
+
+    const QByteArray editRequest =
+        QStringLiteral("{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"tools/call\",\"params\":"
+                       "{\"name\":\"edit_image\",\"arguments\":{\"prompt\":\"blue\","
+                       "\"edit_images\":[\"image-client://references/%1\"]}}}")
+            .arg(ref)
+            .toUtf8();
+    const QJsonObject editResponse = call(server, editRequest);
+    QCOMPARE(editResponse.value(QStringLiteral("result")).toObject().value(QStringLiteral("isError")).toBool(),
+             false);
+    QCOMPARE(captured->image.references.size(), 1);
+    QVERIFY(captured->image.references.first().dataUrl.startsWith(
+        QStringLiteral("data:image/png;base64,")));
+}
+
+void TstMcp::editAcceptsAssetUri()
+{
+    auto captured = std::make_shared<oic::jobs::JobSpec>();
+    oic::mcp::ToolHost host = fakeHost(captured);
+    host.assetDataUrl = [](const QString &id, QString *dataUrl, QString *mime, QString *) {
+        if (id != QLatin1String("a1")) {
+            return false;
+        }
+        *dataUrl = QStringLiteral("data:image/png;base64,AAAA");
+        *mime = QStringLiteral("image/png");
+        return true;
+    };
+
+    oic::mcp::Server server(host);
+    const QJsonObject response = call(
+        server,
+        R"({"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"edit_image","arguments":{"prompt":"blue","edit_images":["image-client://assets/a1"]}}})");
+    QCOMPARE(response.value(QStringLiteral("result")).toObject().value(QStringLiteral("isError")).toBool(),
+             false);
+    QCOMPARE(captured->image.references.size(), 1);
+    QCOMPARE(captured->image.references.first().dataUrl,
+             QStringLiteral("data:image/png;base64,AAAA"));
 }
 
 QTEST_GUILESS_MAIN(TstMcp)
