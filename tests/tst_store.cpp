@@ -432,10 +432,14 @@ void TstStore::twoThreadsWriteConcurrently()
     first.wait(20000);
     second.wait(20000);
 
+    // Report the writer's error before the counts: when a thread wrote nothing, the reason is
+    // the whole point, and a bare "0 != 25" hides it.
+    const QString firstError = first.errorText();
+    const QString secondError = second.errorText();
+    QVERIFY2(firstError.isEmpty(), qPrintable(QStringLiteral("first writer: %1").arg(firstError)));
+    QVERIFY2(secondError.isEmpty(), qPrintable(QStringLiteral("second writer: %1").arg(secondError)));
     QCOMPARE(first.written(), 25);
     QCOMPARE(second.written(), 25);
-    QVERIFY2(first.errorText().isEmpty(), qPrintable(first.errorText()));
-    QVERIFY2(second.errorText().isEmpty(), qPrintable(second.errorText()));
 
     auto store = openStore(&error);
     QVERIFY2(store != nullptr, qPrintable(error));
